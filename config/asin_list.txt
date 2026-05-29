@@ -1,9 +1,40 @@
 # Format: ASIN | category
-B07QK9C9KT | fan
-B0DLFCN4J5 | fan
-B0D97YVVQ2 | fan
+# category must be fan or hand_warmer
 
-# Notes:
-# B07QK9C9KT - JISULIFE 1
-# B0DLFCN4J5 - Aecooly 1
-# B0D97YVVQ2 - Playhot 1
+# JISULIFE
+B07QK9C9KT | fan
+B08911JGGW | fan
+B0CRDT715R | fan
+B0CR3JJJTS | fan
+
+# Aecooly
+B0DLFCN4J5 | fan
+B0FVLY9NGB | fan
+B0G2M5VHLT | fan
+
+# PlayHot
+B0D97YVVQ2 | fan
+B0FG2WDNWL | fan
+
+# Gaiatop
+B09MHFPW6H | fan
+B0BKQ7MY3L | fan
+B0CR475VGQ | fan
+
+# SWEETFULL
+B0CQLF6C4S | fan
+B0BR3HFJZB | fan
+B0CP9H3VX6 | fan
+B0CNZ39XKJ | fan
+B0BR3LBSMB | fan
+
+# Diveblues
+B0GCWDN43C | fan
+B0CXJBY3FP | fan
+B0GCZVLDHT | fan
+
+# Coolhill
+B0GGMRF7PX | fan
+
+# Shark
+B0DXRCXX3H | fan
