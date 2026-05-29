@@ -706,7 +706,7 @@ def parse_datetime(value: str) -> datetime | None:
 def is_relevant_to_category(title: str, url: str, category: str) -> bool:
     text = f"{title} {urlparse(url).path}".lower()
     if category == "fan":
-        return bool(re.search(r"\bfans?\b", text))
+        return bool(re.search(r"\bfans?\b(?![-\s]?favorites?)", text))
     if category == "hand_warmer":
         return bool(re.search(r"\bhand[-\s]?warmers?\b", text))
     return True
