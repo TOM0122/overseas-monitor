@@ -88,7 +88,9 @@ create table amazon_snapshots (
   title text,
   category text,
   price numeric,
-  bsr int,
+  bsr int, -- Best Sellers in Personal Fans rank by default
+  bsr_category_id text,
+  bsr_category_name text,
   rating numeric,
   review_count int,
   buy_box_price numeric,
@@ -98,9 +100,10 @@ create table amazon_snapshots (
 create index on slickdeals_deals(category, scraped_at);
 create index on slickdeals_deals(source, scraped_at);
 create index on amazon_snapshots(asin, snapshot_at);
+create index on amazon_snapshots(bsr_category_id, asin, snapshot_at);
 ```
 
-如果你的表已经按旧 schema 创建，执行一次迁移：
+如果你的表已经按旧 schema 创建，执行迁移：
 
 ```sql
 alter table slickdeals_deals
@@ -112,6 +115,13 @@ where source is null;
 
 create index if not exists idx_slickdeals_source_scraped_at
 on slickdeals_deals(source, scraped_at);
+
+alter table amazon_snapshots
+add column if not exists bsr_category_id text,
+add column if not exists bsr_category_name text;
+
+create index if not exists idx_amazon_snapshots_bsr_category_asin_snapshot_at
+on amazon_snapshots(bsr_category_id, asin, snapshot_at);
 ```
 
 同样的 SQL 已保存为 `sql/001_add_source_to_slickdeals_deals.sql`。TODO：后续如确认多站点模型稳定，可考虑把表名从 `slickdeals_deals` 重命名为 `offsite_deals`。
@@ -234,6 +244,10 @@ DINGTALK_WEBHOOK_URL=...
 DINGTALK_WEBHOOK_SECRET=
 TIMEZONE=Asia/Shanghai
 ANALYSIS_TOP_DEALS_LIMIT=20
+ANALYSIS_OFFSITE_CATEGORY=fan
+ANALYSIS_MAX_REASONABLE_PRICE=200
+KEEPA_BSR_CATEGORY_ID=3303867011
+KEEPA_BSR_CATEGORY_NAME=Best Sellers in Personal Fans
 ```
 
 只拉取 Supabase 数据并打印整理后的报告输入，不调用 LLM、不推送：

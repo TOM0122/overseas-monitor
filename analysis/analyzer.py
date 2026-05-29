@@ -34,13 +34,21 @@ def run(
     tz = ZoneInfo(os.getenv("TIMEZONE", "Asia/Shanghai"))
     report_date = report_date or datetime.now(tz).date()
     top_deals_limit = int(os.getenv("ANALYSIS_TOP_DEALS_LIMIT", "20"))
+    offsite_category = os.getenv("ANALYSIS_OFFSITE_CATEGORY", "fan")
+    max_price = float(os.getenv("ANALYSIS_MAX_REASONABLE_PRICE", "200"))
+    bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", "3303867011")
+    bsr_category_name = os.getenv("KEEPA_BSR_CATEGORY_NAME", "Best Sellers in Personal Fans")
     monitored_brands = load_monitored_brands()
 
     today_start_utc, today_end_utc = local_day_bounds_utc(report_date, tz)
     yesterday_start_utc, _ = local_day_bounds_utc(report_date - timedelta(days=1), tz)
 
     repository = get_repository()
-    slickdeals = repository.fetch_slickdeals_deals_between(today_start_utc, today_end_utc)
+    slickdeals = repository.fetch_slickdeals_deals_between(
+        today_start_utc,
+        today_end_utc,
+        category=offsite_category,
+    )
     amazon_today = repository.fetch_amazon_snapshots_between(today_start_utc, today_end_utc)
     amazon_yesterday = repository.fetch_amazon_snapshots_between(
         yesterday_start_utc,
@@ -55,6 +63,9 @@ def run(
         amazon_yesterday=amazon_yesterday,
         top_deals_limit=top_deals_limit,
         monitored_brands=monitored_brands,
+        max_reasonable_price=max_price,
+        bsr_category_id=bsr_category_id,
+        bsr_category_name=bsr_category_name,
     )
 
     if dry_run:
@@ -89,9 +100,14 @@ def build_report_payload(
     amazon_yesterday: list[dict[str, Any]],
     top_deals_limit: int,
     monitored_brands: list[str],
+    max_reasonable_price: float = 200,
+    bsr_category_id: str = "3303867011",
+    bsr_category_name: str = "Best Sellers in Personal Fans",
 ) -> dict[str, Any]:
-    today_latest = latest_snapshot_by_asin(amazon_today)
-    yesterday_latest = latest_snapshot_by_asin(amazon_yesterday)
+    bsr_today = filter_bsr_snapshots(amazon_today, bsr_category_id)
+    bsr_yesterday = filter_bsr_snapshots(amazon_yesterday, bsr_category_id)
+    today_latest = latest_snapshot_by_asin(bsr_today)
+    yesterday_latest = latest_snapshot_by_asin(bsr_yesterday)
 
     bsr_items = []
     for asin, today in sorted(today_latest.items()):
@@ -103,10 +119,15 @@ def build_report_payload(
         "timezone": str(tz),
         "generated_at": datetime.now(timezone.utc).astimezone(tz).isoformat(),
         "monitored_brands": monitored_brands,
+        "bsr_category": {
+            "id": bsr_category_id,
+            "name": bsr_category_name,
+        },
         "summary_counts": {
             "offsite_deals_today": len(slickdeals),
             "amazon_snapshots_today": len(amazon_today),
-            "amazon_asins_today": len(today_latest),
+            "amazon_bsr_snapshots_today": len(bsr_today),
+            "amazon_bsr_asins_today": len(today_latest),
             "amazon_asins_with_yesterday_baseline": sum(
                 1 for asin in today_latest if asin in yesterday_latest
             ),
@@ -117,8 +138,18 @@ def build_report_payload(
             tz,
             top_deals_limit,
             monitored_brands,
+            max_reasonable_price,
         ),
     }
+
+
+def filter_bsr_snapshots(snapshots: list[dict[str, Any]], bsr_category_id: str) -> list[dict[str, Any]]:
+    filtered = []
+    for snapshot in snapshots:
+        snapshot_category_id = snapshot.get("bsr_category_id")
+        if str(snapshot_category_id or "") == str(bsr_category_id):
+            filtered.append(snapshot)
+    return filtered
 
 
 def summarize_offsite_deals(
@@ -126,6 +157,7 @@ def summarize_offsite_deals(
     tz: ZoneInfo,
     limit: int,
     monitored_brands: list[str],
+    max_reasonable_price: float,
 ) -> dict[str, Any]:
     category_counts: dict[str, int] = defaultdict(int)
     brand_counts: dict[str, int] = defaultdict(int)
@@ -140,7 +172,7 @@ def summarize_offsite_deals(
         category_counts[category] += 1
         brand_counts[brand] += 1
         source_counts[source] += 1
-        normalized_deals.append(normalize_deal(deal, tz))
+        normalized_deals.append(normalize_deal(deal, tz, max_reasonable_price))
 
     normalized_deals.sort(
         key=lambda item: (
@@ -171,16 +203,21 @@ def summarize_offsite_deals(
             )
             bucket["deal_count"] += 1
             bucket["deals"].append(deal)
-            bucket["price_min"] = min_optional(bucket["price_min"], deal.get("price"))
-            bucket["price_max"] = max_optional(bucket["price_max"], deal.get("price"))
+            reasonable_price = reasonable_price_or_none(deal.get("price"), max_reasonable_price)
+            bucket["price_min"] = min_optional(bucket["price_min"], reasonable_price)
+            bucket["price_max"] = max_optional(bucket["price_max"], reasonable_price)
             bucket["discount_min"] = min_optional(bucket["discount_min"], deal.get("discount_pct"))
             bucket["discount_max"] = max_optional(bucket["discount_max"], deal.get("discount_pct"))
         else:
             other_brands[brand] += 1
 
-    prices = [deal["price"] for deal in normalized_deals if deal.get("price") is not None]
+    price_eligible_deals = [
+        deal for deal in normalized_deals
+        if reasonable_price_or_none(deal.get("price"), max_reasonable_price) is not None
+    ]
+    prices = [deal["price"] for deal in price_eligible_deals]
     lowest_price_deal = min(
-        (deal for deal in normalized_deals if deal.get("price") is not None),
+        price_eligible_deals,
         key=lambda item: item["price"],
         default=None,
     )
@@ -194,6 +231,7 @@ def summarize_offsite_deals(
             "min": min(prices) if prices else None,
             "max": max(prices) if prices else None,
             "lowest_price_deal": lowest_price_deal,
+            "max_reasonable_price": max_reasonable_price,
         },
         "monitored_brands": list(by_brand.values()),
         "other_brands": dict(sorted(other_brands.items())),
@@ -201,14 +239,17 @@ def summarize_offsite_deals(
     }
 
 
-def normalize_deal(deal: dict[str, Any], tz: ZoneInfo) -> dict[str, Any]:
+def normalize_deal(deal: dict[str, Any], tz: ZoneInfo, max_reasonable_price: float) -> dict[str, Any]:
+    raw_price = to_float_or_none(deal.get("price"))
+    report_price = reasonable_price_or_none(raw_price, max_reasonable_price)
     return {
         "deal_id": deal.get("deal_id"),
         "source": deal.get("source") or "slickdeals",
         "title": deal.get("title"),
         "brand": deal.get("brand"),
         "category": deal.get("category"),
-        "price": to_float_or_none(deal.get("price")),
+        "price": report_price,
+        "price_note": "价格超出合理范围，已排除" if raw_price is not None and report_price is None else None,
         "original_price": to_float_or_none(deal.get("original_price")),
         "discount_pct": to_float_or_none(deal.get("discount_pct")),
         "thumbs_up": to_int_or_none(deal.get("thumbs_up")),
@@ -362,6 +403,15 @@ def max_optional(current: Any, candidate: Any) -> float | None:
     if candidate_value is None:
         return current_value
     return max(current_value, candidate_value)
+
+
+def reasonable_price_or_none(value: Any, max_reasonable_price: float) -> float | None:
+    price = to_float_or_none(value)
+    if price is None:
+        return None
+    if price <= 0 or price > max_reasonable_price:
+        return None
+    return price
 
 
 def normalize_brand_key(value: Any) -> str:

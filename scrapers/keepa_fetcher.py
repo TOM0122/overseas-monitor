@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
 VALID_CATEGORIES = {"fan", "hand_warmer"}
+DEFAULT_BSR_CATEGORY_ID = "3303867011"
+DEFAULT_BSR_CATEGORY_NAME = "Best Sellers in Personal Fans"
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,8 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
     stats_days = int(os.getenv("KEEPA_STATS_DAYS", "1"))
     request_delay_seconds = float(os.getenv("KEEPA_REQUEST_DELAY_SECONDS", "3"))
     fetch_buybox = parse_bool(os.getenv("KEEPA_FETCH_BUYBOX", "true"))
+    bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", DEFAULT_BSR_CATEGORY_ID).strip()
+    bsr_category_name = os.getenv("KEEPA_BSR_CATEGORY_NAME", DEFAULT_BSR_CATEGORY_NAME).strip()
 
     api = keepa.Keepa(api_key, logging_level="INFO")
     snapshots: list[dict[str, Any]] = []
@@ -68,7 +72,12 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
                 logger.warning("No Keepa product returned for asin=%s", asin_config.asin)
                 continue
 
-            snapshot = product_to_snapshot(product, asin_config)
+            snapshot = product_to_snapshot(
+                product,
+                asin_config,
+                bsr_category_id=bsr_category_id,
+                bsr_category_name=bsr_category_name,
+            )
             snapshots.append(snapshot)
             logger.info("Prepared Amazon snapshot asin=%s title=%r", snapshot["asin"], snapshot["title"])
         except Exception as exc:
@@ -160,6 +169,7 @@ def fetch_product(
         asin,
         domain=domain,
         stats=stats_days,
+        days=max(stats_days, 1),
         history=True,
         rating=True,
         buybox=fetch_buybox,
@@ -169,7 +179,13 @@ def fetch_product(
     return products[0] if products else None
 
 
-def product_to_snapshot(product: dict[str, Any], asin_config: AsinConfig) -> dict[str, Any]:
+def product_to_snapshot(
+    product: dict[str, Any],
+    asin_config: AsinConfig,
+    *,
+    bsr_category_id: str = DEFAULT_BSR_CATEGORY_ID,
+    bsr_category_name: str = DEFAULT_BSR_CATEGORY_NAME,
+) -> dict[str, Any]:
     stats = product.get("stats_parsed") or {}
     current_stats = stats.get("current") or {}
     data = product.get("data") or {}
@@ -187,10 +203,19 @@ def product_to_snapshot(product: dict[str, Any], asin_config: AsinConfig) -> dic
         current_stats.get("BUY_BOX_SHIPPING"),
         latest_series_value(data, "BUY_BOX_SHIPPING"),
     )
-    bsr = first_int(
-        current_stats.get("SALES"),
-        latest_series_value(data, "SALES"),
-    )
+    bsr = extract_category_bsr(product, bsr_category_id)
+    if bsr is None and str(product.get("salesRankReference") or "") == str(bsr_category_id):
+        bsr = first_int(
+            current_stats.get("SALES"),
+            latest_series_value(data, "SALES"),
+        )
+    if bsr is None:
+        logger.warning(
+            "No Keepa sales rank found for asin=%s category_id=%s category_name=%r",
+            asin_config.asin,
+            bsr_category_id,
+            bsr_category_name,
+        )
     rating = first_number(
         current_stats.get("RATING"),
         latest_series_value(data, "RATING"),
@@ -207,11 +232,44 @@ def product_to_snapshot(product: dict[str, Any], asin_config: AsinConfig) -> dic
         "category": asin_config.category,
         "price": price,
         "bsr": bsr,
+        "bsr_category_id": bsr_category_id,
+        "bsr_category_name": bsr_category_name,
         "rating": rating,
         "review_count": review_count,
         "buy_box_price": buy_box_price,
         "snapshot_at": snapshot_at,
     }
+
+
+def extract_category_bsr(product: dict[str, Any], category_id: str) -> int | None:
+    """Return latest positive BSR for the configured Amazon category node.
+
+    Keepa's generic SALES field can point to a broader category. For this project
+    we need the Personal Fans node, so use product["salesRanks"][category_id].
+    """
+    sales_ranks = product.get("salesRanks") or {}
+    rank_history = sales_ranks.get(str(category_id))
+    if rank_history is None:
+        rank_history = sales_ranks.get(int(category_id)) if str(category_id).isdigit() else None
+    return latest_rank_from_history(rank_history)
+
+
+def latest_rank_from_history(rank_history: Any) -> int | None:
+    if not rank_history:
+        return None
+
+    if isinstance(rank_history, dict):
+        values = list(rank_history.values())
+    else:
+        values = list(rank_history)
+
+    # Keepa rank histories are usually [time, rank, time, rank, ...].
+    candidate_values = values[1::2] if len(values) >= 2 else values
+    for value in reversed(candidate_values):
+        rank = first_int(value)
+        if rank and rank > 0:
+            return rank
+    return None
 
 
 def latest_series_value(data: dict[str, Any], key: str) -> Any:
