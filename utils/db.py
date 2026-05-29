@@ -50,6 +50,20 @@ class SupabaseRepository:
         logger.info("Inserted %s Amazon snapshots", len(response.data or []))
         return response.data or []
 
+    def upsert_amazon_bestsellers(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Insert or update Amazon best-seller ranks by category, ASIN, and date."""
+        if not rows:
+            logger.info("No Amazon best-seller rows to upsert")
+            return []
+
+        response = (
+            self.client.table("amazon_bestsellers")
+            .upsert(rows, on_conflict="category_id,asin,snapshot_date")
+            .execute()
+        )
+        logger.info("Upserted %s Amazon best-seller rows", len(response.data or []))
+        return response.data or []
+
     def fetch_slickdeals_deals_between(
         self,
         start_utc: datetime,
@@ -88,6 +102,25 @@ class SupabaseRepository:
         response = query.execute()
         return response.data or []
 
+    def fetch_amazon_bestsellers_between(
+        self,
+        start_utc: datetime,
+        end_utc: datetime,
+        category_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = (
+            self.client.table("amazon_bestsellers")
+            .select("*")
+            .gte("snapshot_at", start_utc.isoformat())
+            .lt("snapshot_at", end_utc.isoformat())
+            .order("rank", desc=False)
+        )
+        if category_id:
+            query = query.eq("category_id", category_id)
+
+        response = query.execute()
+        return response.data or []
+
     def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Generic insert helper for small operational scripts."""
         if not rows:
@@ -110,4 +143,3 @@ class SupabaseRepository:
 
 def get_repository() -> SupabaseRepository:
     return SupabaseRepository()
-

@@ -38,6 +38,7 @@ def run(
     max_price = float(os.getenv("ANALYSIS_MAX_REASONABLE_PRICE", "200"))
     bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", "3303867011")
     bsr_category_name = os.getenv("KEEPA_BSR_CATEGORY_NAME", "Best Sellers in Personal Fans")
+    rank_up_threshold = int(os.getenv("BESTSELLER_RANK_UP_THRESHOLD", "10"))
     monitored_brands = load_monitored_brands()
 
     today_start_utc, today_end_utc = local_day_bounds_utc(report_date, tz)
@@ -54,6 +55,16 @@ def run(
         yesterday_start_utc,
         today_start_utc,
     )
+    bestsellers_today = repository.fetch_amazon_bestsellers_between(
+        today_start_utc,
+        today_end_utc,
+        category_id=bsr_category_id,
+    )
+    bestsellers_yesterday = repository.fetch_amazon_bestsellers_between(
+        yesterday_start_utc,
+        today_start_utc,
+        category_id=bsr_category_id,
+    )
 
     report_payload = build_report_payload(
         report_date=report_date,
@@ -66,6 +77,9 @@ def run(
         max_reasonable_price=max_price,
         bsr_category_id=bsr_category_id,
         bsr_category_name=bsr_category_name,
+        bestsellers_today=bestsellers_today,
+        bestsellers_yesterday=bestsellers_yesterday,
+        rank_up_threshold=rank_up_threshold,
     )
 
     if dry_run:
@@ -103,6 +117,9 @@ def build_report_payload(
     max_reasonable_price: float = 200,
     bsr_category_id: str = "3303867011",
     bsr_category_name: str = "Best Sellers in Personal Fans",
+    bestsellers_today: list[dict[str, Any]] | None = None,
+    bestsellers_yesterday: list[dict[str, Any]] | None = None,
+    rank_up_threshold: int = 10,
 ) -> dict[str, Any]:
     bsr_today = filter_bsr_snapshots(amazon_today, bsr_category_id)
     bsr_yesterday = filter_bsr_snapshots(amazon_yesterday, bsr_category_id)
@@ -128,11 +145,17 @@ def build_report_payload(
             "amazon_snapshots_today": len(amazon_today),
             "amazon_bsr_snapshots_today": len(bsr_today),
             "amazon_bsr_asins_today": len(today_latest),
+            "amazon_bestsellers_today": len(bestsellers_today or []),
             "amazon_asins_with_yesterday_baseline": sum(
                 1 for asin in today_latest if asin in yesterday_latest
             ),
         },
         "bsr_monitor": summarize_bsr(bsr_items),
+        "bestseller_monitor": summarize_bestseller_rankings(
+            bestsellers_today or [],
+            bestsellers_yesterday or [],
+            rank_up_threshold=rank_up_threshold,
+        ),
         "offsite": summarize_offsite_deals(
             slickdeals,
             tz,
@@ -305,6 +328,82 @@ def summarize_bsr(items: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "diveblues": [item for item in items if normalize_brand_key(item.get("brand")) == "diveblues"],
         "competitors": [item for item in items if normalize_brand_key(item.get("brand")) != "diveblues"],
+    }
+
+
+def summarize_bestseller_rankings(
+    today_rows: list[dict[str, Any]],
+    yesterday_rows: list[dict[str, Any]],
+    *,
+    rank_up_threshold: int,
+) -> dict[str, Any]:
+    today_latest = latest_bestseller_by_asin(today_rows)
+    yesterday_latest = latest_bestseller_by_asin(yesterday_rows)
+
+    top_today = sorted(today_latest.values(), key=lambda row: to_int_or_none(row.get("rank")) or 999999)
+    tracked_today = [normalize_bestseller_row(row) for row in top_today if row.get("is_tracked") is True]
+    untracked_top = [normalize_bestseller_row(row) for row in top_today if row.get("is_tracked") is not True]
+
+    new_entries = [
+        normalize_bestseller_row(row)
+        for asin, row in today_latest.items()
+        if asin not in yesterday_latest
+    ]
+    new_entries.sort(key=lambda row: row.get("rank") or 999999)
+
+    rank_gainers = []
+    rank_droppers = []
+    for asin, row in today_latest.items():
+        previous = yesterday_latest.get(asin)
+        if not previous:
+            continue
+        current_rank = to_int_or_none(row.get("rank"))
+        previous_rank = to_int_or_none(previous.get("rank"))
+        if current_rank is None or previous_rank is None:
+            continue
+        rank_change = previous_rank - current_rank
+        item = normalize_bestseller_row(row)
+        item["yesterday_rank"] = previous_rank
+        item["rank_change"] = rank_change
+        if rank_change >= rank_up_threshold:
+            rank_gainers.append(item)
+        elif rank_change <= -rank_up_threshold:
+            rank_droppers.append(item)
+
+    rank_gainers.sort(key=lambda row: row["rank_change"], reverse=True)
+    rank_droppers.sort(key=lambda row: row["rank_change"])
+
+    return {
+        "rank_up_threshold": rank_up_threshold,
+        "today_count": len(top_today),
+        "yesterday_count": len(yesterday_latest),
+        "tracked_in_top": tracked_today,
+        "new_entries": new_entries[:20],
+        "rank_gainers": rank_gainers[:20],
+        "rank_droppers": rank_droppers[:20],
+        "untracked_top": untracked_top[:20],
+    }
+
+
+def latest_bestseller_by_asin(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        asin = str(row.get("asin") or "").upper()
+        if not asin:
+            continue
+        current_time = parse_datetime(row.get("snapshot_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        previous_time = parse_datetime(latest.get(asin, {}).get("snapshot_at")) if asin in latest else None
+        if previous_time is None or current_time > previous_time:
+            latest[asin] = row
+    return latest
+
+
+def normalize_bestseller_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "asin": row.get("asin"),
+        "rank": to_int_or_none(row.get("rank")),
+        "is_tracked": row.get("is_tracked"),
+        "snapshot_at": row.get("snapshot_at"),
     }
 
 

@@ -97,10 +97,24 @@ create table amazon_snapshots (
   snapshot_at timestamptz default now()
 );
 
+create table amazon_bestsellers (
+  id bigserial primary key,
+  category_id text not null,
+  category_name text,
+  rank int not null,
+  asin text not null,
+  is_tracked boolean default false,
+  snapshot_date date not null,
+  snapshot_at timestamptz default now(),
+  unique(category_id, asin, snapshot_date)
+);
+
 create index on slickdeals_deals(category, scraped_at);
 create index on slickdeals_deals(source, scraped_at);
 create index on amazon_snapshots(asin, snapshot_at);
 create index on amazon_snapshots(bsr_category_id, asin, snapshot_at);
+create index on amazon_bestsellers(category_id, snapshot_at, rank);
+create index on amazon_bestsellers(asin, snapshot_at);
 ```
 
 如果你的表已经按旧 schema 创建，执行迁移：
@@ -122,9 +136,27 @@ add column if not exists bsr_category_name text;
 
 create index if not exists idx_amazon_snapshots_bsr_category_asin_snapshot_at
 on amazon_snapshots(bsr_category_id, asin, snapshot_at);
+
+create table if not exists amazon_bestsellers (
+  id bigserial primary key,
+  category_id text not null,
+  category_name text,
+  rank int not null,
+  asin text not null,
+  is_tracked boolean default false,
+  snapshot_date date not null,
+  snapshot_at timestamptz default now(),
+  unique(category_id, asin, snapshot_date)
+);
+
+create index if not exists idx_amazon_bestsellers_category_snapshot_rank
+on amazon_bestsellers(category_id, snapshot_at, rank);
+
+create index if not exists idx_amazon_bestsellers_asin_snapshot
+on amazon_bestsellers(asin, snapshot_at);
 ```
 
-同样的 SQL 已保存为 `sql/001_add_source_to_slickdeals_deals.sql`。TODO：后续如确认多站点模型稳定，可考虑把表名从 `slickdeals_deals` 重命名为 `offsite_deals`。
+同样的 SQL 已拆分保存在 `sql/` 目录下。TODO：后续如确认多站点模型稳定，可考虑把表名从 `slickdeals_deals` 重命名为 `offsite_deals`。
 
 ## 配置文件格式
 
@@ -206,6 +238,12 @@ KEEPA_DOMAIN=US
 KEEPA_STATS_DAYS=1
 KEEPA_REQUEST_DELAY_SECONDS=3
 KEEPA_FETCH_BUYBOX=true
+KEEPA_BSR_CATEGORY_ID=3303867011
+KEEPA_BSR_CATEGORY_NAME=Best Sellers in Personal Fans
+KEEPA_BESTSELLER_LIMIT=100
+KEEPA_BESTSELLER_RANK_AVG_RANGE=0
+KEEPA_BESTSELLER_SUBLIST=true
+KEEPA_BESTSELLER_VARIATIONS=false
 ```
 
 `KEEPA_FETCH_BUYBOX=true` 会额外消耗 Keepa token，但可以得到 `buy_box_price`。如果 token 紧张，可以临时改成 `false`，此时 `buy_box_price` 可能为空。
@@ -228,6 +266,18 @@ python -m scrapers.keepa_fetcher --limit 1 --dry-run
 python -m scrapers.keepa_fetcher
 ```
 
+抓取 Personal Fans 类目榜单，不写数据库：
+
+```bash
+python -m scrapers.amazon_bestseller_scraper --limit 100 --dry-run
+```
+
+正式写入 `amazon_bestsellers`：
+
+```bash
+python -m scrapers.amazon_bestseller_scraper --limit 100
+```
+
 ## 分析与钉钉推送
 
 先确认 `.env` 中已配置 Supabase、DeepSeek API、钉钉机器人：
@@ -248,6 +298,7 @@ ANALYSIS_OFFSITE_CATEGORY=fan
 ANALYSIS_MAX_REASONABLE_PRICE=200
 KEEPA_BSR_CATEGORY_ID=3303867011
 KEEPA_BSR_CATEGORY_NAME=Best Sellers in Personal Fans
+BESTSELLER_RANK_UP_THRESHOLD=10
 ```
 
 只拉取 Supabase 数据并打印整理后的报告输入，不调用 LLM、不推送：
@@ -275,7 +326,8 @@ python -m analysis.analyzer
 1. Slickdeals 爬取并写入 `slickdeals_deals`
 2. hip2save 爬取并写入 `slickdeals_deals`
 3. Keepa 拉取并写入 `amazon_snapshots`
-4. 读取当天数据，生成日报，并推送到钉钉
+4. Keepa 类目榜单拉取并写入 `amazon_bestsellers`
+5. 读取当天数据，生成日报，并推送到钉钉
 
 本地完整 dry-run：
 
@@ -293,7 +345,7 @@ python main.py
 
 ```bash
 python main.py --skip-analysis
-python main.py --skip-slickdeals --skip-hip2save --skip-keepa --dry-run
+python main.py --skip-slickdeals --skip-hip2save --skip-keepa --skip-bestsellers --dry-run
 python main.py --slickdeals-limit 5 --dry-run
 ```
 
@@ -314,6 +366,12 @@ KEEPA_DOMAIN
 KEEPA_STATS_DAYS
 KEEPA_REQUEST_DELAY_SECONDS
 KEEPA_FETCH_BUYBOX
+KEEPA_BSR_CATEGORY_ID
+KEEPA_BSR_CATEGORY_NAME
+KEEPA_BESTSELLER_LIMIT
+KEEPA_BESTSELLER_RANK_AVG_RANGE
+KEEPA_BESTSELLER_SUBLIST
+KEEPA_BESTSELLER_VARIATIONS
 LLM_BASE_URL
 LLM_API_KEY
 LLM_MODEL
@@ -324,6 +382,9 @@ DINGTALK_WEBHOOK_SECRET
 LOG_LEVEL
 TIMEZONE
 ANALYSIS_TOP_DEALS_LIMIT
+ANALYSIS_OFFSITE_CATEGORY
+ANALYSIS_MAX_REASONABLE_PRICE
+BESTSELLER_RANK_UP_THRESHOLD
 ```
 
 5. 确认 Deploy 设置：
@@ -337,6 +398,7 @@ ANALYSIS_TOP_DEALS_LIMIT
 Starting step: slickdeals_scraper
 Starting step: hip2save_scraper
 Starting step: keepa_fetcher
+Starting step: amazon_bestseller_scraper
 Starting step: daily_analyzer
 Pipeline summary: ...
 ```

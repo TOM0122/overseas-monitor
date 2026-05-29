@@ -10,7 +10,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from analysis import analyzer
-from scrapers import hip2save_scraper, keepa_fetcher, slickdeals_scraper
+from scrapers import amazon_bestseller_scraper, hip2save_scraper, keepa_fetcher, slickdeals_scraper
 
 
 @dataclass
@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-slickdeals", action="store_true", help="Skip Slickdeals scraping")
     parser.add_argument("--skip-hip2save", action="store_true", help="Skip hip2save scraping")
     parser.add_argument("--skip-keepa", action="store_true", help="Skip Keepa fetching")
+    parser.add_argument("--skip-bestsellers", action="store_true", help="Skip Amazon best-seller ranking fetch")
     parser.add_argument("--skip-analysis", action="store_true", help="Skip report generation and push")
     parser.add_argument(
         "--dry-run",
@@ -95,6 +96,14 @@ def main() -> None:
             run_step(
                 "keepa_fetcher",
                 lambda: keepa_fetcher.run(dry_run=args.dry_run),
+            )
+        )
+
+    if not args.skip_bestsellers:
+        results.append(
+            run_step(
+                "amazon_bestseller_scraper",
+                lambda: amazon_bestseller_scraper.run(dry_run=args.dry_run),
             )
         )
 
