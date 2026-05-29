@@ -213,7 +213,7 @@ def extract_original_price(
             value = parse_money(node.get_text(" ", strip=True))
             if value is not None:
                 candidates.append(value)
-    for match in re.finditer(r"(?:regularly|reg\\.?|was|retail)\\s*\\$\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)", body_text, flags=re.IGNORECASE):
+    for match in re.finditer(r"(?:regularly|reg\.?|was|retail)\s*\$\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", body_text, flags=re.IGNORECASE):
         candidates.append(float(match.group(1).replace(",", "")))
     for value in candidates:
         if price is None or value > price:
@@ -247,7 +247,7 @@ def extract_comments_count(soup: BeautifulSoup, body_text: str) -> int | None:
             value = parse_count(node.get_text(" ", strip=True))
             if value is not None:
                 return value
-    match = re.search(r"([0-9][0-9,]*)\\s+comments?", body_text, flags=re.IGNORECASE)
+    match = re.search(r"([0-9][0-9,]*)\s+comments?", body_text, flags=re.IGNORECASE)
     return int(match.group(1).replace(",", "")) if match else None
 
 
@@ -272,7 +272,7 @@ def parse_posted_at(text: str) -> datetime | None:
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
         except ValueError:
             continue
-    match = re.search(r"([A-Z][a-z]+\\s+\\d{1,2},\\s+20\\d{2})", cleaned)
+    match = re.search(r"([A-Z][a-z]+\s+\d{1,2},\s+20\d{2})", cleaned)
     if match:
         for fmt in ("%B %d, %Y", "%b %d, %Y"):
             try:
@@ -289,7 +289,7 @@ def parse_count(text: str) -> int | None:
 
 def stable_slug(url: str) -> str:
     path = urlparse(url).path.strip("/")
-    slug = path.split("/")[-1] if path else re.sub(r"\\W+", "-", url)
+    slug = path.split("/")[-1] if path else re.sub(r"\W+", "-", url)
     return slug[:160]
 
 
