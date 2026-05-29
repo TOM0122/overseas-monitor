@@ -1,0 +1,411 @@
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+from collections import defaultdict
+from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from dotenv import load_dotenv
+
+from utils.db import get_repository
+from utils.dingtalk import get_dingtalk_client
+from utils.llm_client import get_llm_client
+
+logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROMPT_PATH = PROJECT_ROOT / "prompts" / "daily_report.md"
+BRAND_LIST_PATH = PROJECT_ROOT / "config" / "brand_list.txt"
+
+
+def run(
+    *,
+    report_date: date | None = None,
+    dry_run: bool = False,
+    no_push: bool = False,
+) -> str:
+    """Build daily data package, call LLM, and send the report to DingTalk."""
+    load_dotenv()
+    tz = ZoneInfo(os.getenv("TIMEZONE", "Asia/Shanghai"))
+    report_date = report_date or datetime.now(tz).date()
+    top_deals_limit = int(os.getenv("ANALYSIS_TOP_DEALS_LIMIT", "20"))
+    monitored_brands = load_monitored_brands()
+
+    today_start_utc, today_end_utc = local_day_bounds_utc(report_date, tz)
+    yesterday_start_utc, _ = local_day_bounds_utc(report_date - timedelta(days=1), tz)
+
+    repository = get_repository()
+    slickdeals = repository.fetch_slickdeals_deals_between(today_start_utc, today_end_utc)
+    amazon_today = repository.fetch_amazon_snapshots_between(today_start_utc, today_end_utc)
+    amazon_yesterday = repository.fetch_amazon_snapshots_between(
+        yesterday_start_utc,
+        today_start_utc,
+    )
+
+    report_payload = build_report_payload(
+        report_date=report_date,
+        tz=tz,
+        slickdeals=slickdeals,
+        amazon_today=amazon_today,
+        amazon_yesterday=amazon_yesterday,
+        top_deals_limit=top_deals_limit,
+        monitored_brands=monitored_brands,
+    )
+
+    if dry_run:
+        output = json.dumps(report_payload, ensure_ascii=False, indent=2, default=str)
+        print(output)
+        return output
+
+    prompt = render_prompt(report_payload)
+    report_markdown = get_llm_client().complete_prompt(
+        prompt,
+        system="你是海外电商品牌的竞品数据分析助手。只基于输入数据生成简洁、可执行的中文日报。",
+    )
+    if not report_markdown:
+        raise RuntimeError("LLM returned an empty report")
+
+    if no_push:
+        print(report_markdown)
+        return report_markdown
+
+    title = f"竞品监控日报 {report_date.isoformat()}"
+    get_dingtalk_client().send_markdown(title=title, markdown=report_markdown)
+    logger.info("Daily report sent to DingTalk")
+    return report_markdown
+
+
+def build_report_payload(
+    *,
+    report_date: date,
+    tz: ZoneInfo,
+    slickdeals: list[dict[str, Any]],
+    amazon_today: list[dict[str, Any]],
+    amazon_yesterday: list[dict[str, Any]],
+    top_deals_limit: int,
+    monitored_brands: list[str],
+) -> dict[str, Any]:
+    today_latest = latest_snapshot_by_asin(amazon_today)
+    yesterday_latest = latest_snapshot_by_asin(amazon_yesterday)
+
+    bsr_items = []
+    for asin, today in sorted(today_latest.items()):
+        yesterday = yesterday_latest.get(asin)
+        bsr_items.append(build_bsr_item(today, yesterday, tz))
+
+    return {
+        "report_date": report_date.isoformat(),
+        "timezone": str(tz),
+        "generated_at": datetime.now(timezone.utc).astimezone(tz).isoformat(),
+        "monitored_brands": monitored_brands,
+        "summary_counts": {
+            "offsite_deals_today": len(slickdeals),
+            "amazon_snapshots_today": len(amazon_today),
+            "amazon_asins_today": len(today_latest),
+            "amazon_asins_with_yesterday_baseline": sum(
+                1 for asin in today_latest if asin in yesterday_latest
+            ),
+        },
+        "bsr_monitor": summarize_bsr(bsr_items),
+        "offsite": summarize_offsite_deals(
+            slickdeals,
+            tz,
+            top_deals_limit,
+            monitored_brands,
+        ),
+    }
+
+
+def summarize_offsite_deals(
+    deals: list[dict[str, Any]],
+    tz: ZoneInfo,
+    limit: int,
+    monitored_brands: list[str],
+) -> dict[str, Any]:
+    category_counts: dict[str, int] = defaultdict(int)
+    brand_counts: dict[str, int] = defaultdict(int)
+    source_counts: dict[str, int] = defaultdict(int)
+    monitored_brand_set = {brand.lower(): brand for brand in monitored_brands}
+
+    normalized_deals = []
+    for deal in deals:
+        category = deal.get("category") or "unknown"
+        brand = deal.get("brand") or "unknown"
+        source = deal.get("source") or "slickdeals"
+        category_counts[category] += 1
+        brand_counts[brand] += 1
+        source_counts[source] += 1
+        normalized_deals.append(normalize_deal(deal, tz))
+
+    normalized_deals.sort(
+        key=lambda item: (
+            item.get("thumbs_up") or 0,
+            item.get("comments_count") or 0,
+            item.get("price") is not None,
+        ),
+        reverse=True,
+    )
+
+    by_brand: dict[str, dict[str, Any]] = {}
+    other_brands: dict[str, int] = defaultdict(int)
+    for deal in normalized_deals:
+        brand = deal.get("brand") or "unknown"
+        canonical_brand = monitored_brand_set.get(str(brand).lower())
+        if canonical_brand:
+            bucket = by_brand.setdefault(
+                canonical_brand,
+                {
+                    "brand": canonical_brand,
+                    "deal_count": 0,
+                    "price_min": None,
+                    "price_max": None,
+                    "discount_min": None,
+                    "discount_max": None,
+                    "deals": [],
+                },
+            )
+            bucket["deal_count"] += 1
+            bucket["deals"].append(deal)
+            bucket["price_min"] = min_optional(bucket["price_min"], deal.get("price"))
+            bucket["price_max"] = max_optional(bucket["price_max"], deal.get("price"))
+            bucket["discount_min"] = min_optional(bucket["discount_min"], deal.get("discount_pct"))
+            bucket["discount_max"] = max_optional(bucket["discount_max"], deal.get("discount_pct"))
+        else:
+            other_brands[brand] += 1
+
+    prices = [deal["price"] for deal in normalized_deals if deal.get("price") is not None]
+    lowest_price_deal = min(
+        (deal for deal in normalized_deals if deal.get("price") is not None),
+        key=lambda item: item["price"],
+        default=None,
+    )
+
+    return {
+        "source_counts": dict(sorted(source_counts.items())),
+        "category_counts": dict(sorted(category_counts.items())),
+        "brand_counts": dict(sorted(brand_counts.items())),
+        "brand_count": len([brand for brand in brand_counts if brand != "unknown"]),
+        "price_range": {
+            "min": min(prices) if prices else None,
+            "max": max(prices) if prices else None,
+            "lowest_price_deal": lowest_price_deal,
+        },
+        "monitored_brands": list(by_brand.values()),
+        "other_brands": dict(sorted(other_brands.items())),
+        "top_deals": normalized_deals[:limit],
+    }
+
+
+def normalize_deal(deal: dict[str, Any], tz: ZoneInfo) -> dict[str, Any]:
+    return {
+        "deal_id": deal.get("deal_id"),
+        "source": deal.get("source") or "slickdeals",
+        "title": deal.get("title"),
+        "brand": deal.get("brand"),
+        "category": deal.get("category"),
+        "price": to_float_or_none(deal.get("price")),
+        "original_price": to_float_or_none(deal.get("original_price")),
+        "discount_pct": to_float_or_none(deal.get("discount_pct")),
+        "thumbs_up": to_int_or_none(deal.get("thumbs_up")),
+        "comments_count": to_int_or_none(deal.get("comments_count")),
+        "posted_at": to_local_iso(deal.get("posted_at"), tz),
+        "scraped_at": to_local_iso(deal.get("scraped_at"), tz),
+        "url": deal.get("url"),
+    }
+
+
+def latest_snapshot_by_asin(snapshots: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for snapshot in snapshots:
+        asin = snapshot.get("asin")
+        if not asin:
+            continue
+        current_time = parse_datetime(snapshot.get("snapshot_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        previous_time = parse_datetime(latest.get(asin, {}).get("snapshot_at")) if asin in latest else None
+        if previous_time is None or current_time > previous_time:
+            latest[asin] = snapshot
+    return latest
+
+
+def build_bsr_item(
+    today: dict[str, Any],
+    yesterday: dict[str, Any] | None,
+    tz: ZoneInfo,
+) -> dict[str, Any]:
+    current_bsr = to_int_or_none(today.get("bsr"))
+    yesterday_bsr = to_int_or_none(yesterday.get("bsr")) if yesterday else None
+    bsr_abs = diff(current_bsr, yesterday_bsr)
+    return {
+        "asin": today.get("asin"),
+        "brand": today.get("brand"),
+        "title": today.get("title"),
+        "category": today.get("category"),
+        "snapshot_at": to_local_iso(today.get("snapshot_at"), tz),
+        "current_bsr": current_bsr,
+        "yesterday_bsr": yesterday_bsr,
+        "bsr_change_abs": bsr_abs,
+        "bsr_change_pct": pct_change(current_bsr, yesterday_bsr),
+        "bsr_direction": bsr_direction(bsr_abs),
+        "data_status": "ok" if current_bsr is not None and yesterday_bsr is not None else "数据缺失",
+        "missing_fields": {
+            "today_bsr": current_bsr is None,
+            "yesterday_bsr": yesterday_bsr is None,
+        },
+        "yesterday_snapshot_at": to_local_iso(yesterday.get("snapshot_at"), tz) if yesterday else None,
+    }
+
+
+def summarize_bsr(items: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "diveblues": [item for item in items if normalize_brand_key(item.get("brand")) == "diveblues"],
+        "competitors": [item for item in items if normalize_brand_key(item.get("brand")) != "diveblues"],
+    }
+
+
+def render_prompt(report_payload: dict[str, Any]) -> str:
+    template = PROMPT_PATH.read_text(encoding="utf-8")
+    data_json = json.dumps(report_payload, ensure_ascii=False, indent=2, default=str)
+    return template.replace("{{DATA_JSON}}", data_json)
+
+
+def local_day_bounds_utc(day: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    start_local = datetime.combine(day, time.min, tzinfo=tz)
+    end_local = start_local + timedelta(days=1)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def to_local_iso(value: Any, tz: ZoneInfo) -> str | None:
+    parsed = parse_datetime(value)
+    if not parsed:
+        return None
+    return parsed.astimezone(tz).isoformat()
+
+
+def to_float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return round(float(value), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def diff(current: Any, previous: Any) -> float | None:
+    current_number = to_float_or_none(current)
+    previous_number = to_float_or_none(previous)
+    if current_number is None or previous_number is None:
+        return None
+    return round(current_number - previous_number, 4)
+
+
+def pct_change(current: Any, previous: Any) -> float | None:
+    current_number = to_float_or_none(current)
+    previous_number = to_float_or_none(previous)
+    if current_number is None or previous_number in (None, 0):
+        return None
+    return round((current_number - previous_number) / previous_number * 100, 2)
+
+
+def bsr_direction(change_abs: float | None) -> str | None:
+    if change_abs is None:
+        return None
+    if change_abs < 0:
+        return "排名上升"
+    if change_abs > 0:
+        return "排名下降"
+    return "持平"
+
+
+def min_optional(current: Any, candidate: Any) -> float | None:
+    current_value = to_float_or_none(current)
+    candidate_value = to_float_or_none(candidate)
+    if current_value is None:
+        return candidate_value
+    if candidate_value is None:
+        return current_value
+    return min(current_value, candidate_value)
+
+
+def max_optional(current: Any, candidate: Any) -> float | None:
+    current_value = to_float_or_none(current)
+    candidate_value = to_float_or_none(candidate)
+    if current_value is None:
+        return candidate_value
+    if candidate_value is None:
+        return current_value
+    return max(current_value, candidate_value)
+
+
+def normalize_brand_key(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def load_monitored_brands() -> list[str]:
+    if not BRAND_LIST_PATH.exists():
+        return []
+    brands = []
+    for raw_line in BRAND_LIST_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line and not line.startswith("#"):
+            brands.append(line)
+    return brands
+
+
+def configure_logging() -> None:
+    load_dotenv()
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate and send daily competitor report")
+    parser.add_argument(
+        "--date",
+        type=date.fromisoformat,
+        default=None,
+        help="Report date in local timezone, format YYYY-MM-DD. Defaults to today.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print report payload only")
+    parser.add_argument("--no-push", action="store_true", help="Generate report but do not send DingTalk")
+    return parser.parse_args()
+
+
+def main() -> None:
+    configure_logging()
+    args = parse_args()
+    run(report_date=args.date, dry_run=args.dry_run, no_push=args.no_push)
+
+
+if __name__ == "__main__":
+    main()

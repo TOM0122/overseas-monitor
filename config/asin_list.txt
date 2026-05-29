@@ -1,0 +1,9 @@
+# Format: ASIN | category
+B07QK9C9KT | fan
+B0DLFCN4J5 | fan
+B0D97YVVQ2 | fan
+
+# Notes:
+# B07QK9C9KT - JISULIFE 1
+# B0DLFCN4J5 - Aecooly 1
+# B0D97YVVQ2 - Playhot 1

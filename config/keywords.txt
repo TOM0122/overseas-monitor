@@ -1,0 +1,9 @@
+# Format: keyword | category
+# category must be fan or hand_warmer
+portable fan | fan
+handheld fan | fan
+turbo fan | fan
+rechargeable fan | fan
+
+# Hand warmer keywords are paused for the current offsite fan monitoring iteration.
+# hand warmer | hand_warmer
