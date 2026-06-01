@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +12,10 @@ from dotenv import load_dotenv
 
 from analysis import analyzer
 from scrapers import amazon_bestseller_scraper, hip2save_scraper, keepa_fetcher, slickdeals_scraper
+from utils.dingtalk import get_dingtalk_client
+
+# 这些步骤若成功但返回 0 条记录，视为异常并告警。
+CRITICAL_EMPTY_STEPS = {"slickdeals_scraper", "keepa_fetcher", "amazon_bestseller_scraper"}
 
 
 @dataclass
@@ -18,6 +23,7 @@ class StepResult:
     name: str
     ok: bool
     detail: str = ""
+    count: int | None = None
 
 
 def configure_logging() -> None:
@@ -37,10 +43,33 @@ def run_step(name: str, func: Callable[[], Any]) -> StepResult:
         count = len(result) if isinstance(result, list) else None
         detail = f"{count} records" if count is not None else "completed"
         logger.info("Finished step: %s (%s)", name, detail)
-        return StepResult(name=name, ok=True, detail=detail)
+        return StepResult(name=name, ok=True, detail=detail, count=count)
     except Exception as exc:
         logger.exception("Step failed: %s", name)
-        return StepResult(name=name, ok=False, detail=str(exc))
+        return StepResult(name=name, ok=False, detail=str(exc), count=None)
+
+
+def send_pipeline_alert(
+    failed: list[StepResult],
+    empty_critical: list[StepResult],
+    summary: str,
+) -> None:
+    logger = logging.getLogger(__name__)
+    # 注意：文本需包含钉钉机器人「自定义关键词」安全设置允许的词（与日报一致，如「竞品监控」），否则会被钉钉拦截。
+    lines = ["竞品监控 Pipeline 告警", ""]
+    if failed:
+        lines.append("失败步骤：")
+        lines += [f"- {r.name}: {r.detail}" for r in failed]
+    if empty_critical:
+        lines.append("关键步骤 0 条数据：")
+        lines += [f"- {r.name}" for r in empty_critical]
+    lines += ["", f"汇总：{summary}"]
+    try:
+        get_dingtalk_client().send_text("\n".join(lines))
+        logger.info("Sent pipeline alert to DingTalk")
+    except Exception:
+        # 告警失败不能再让进程崩溃，记录即可。
+        logger.exception("Failed to send pipeline alert to DingTalk")
 
 
 def parse_args() -> argparse.Namespace:
@@ -118,17 +147,24 @@ def main() -> None:
             )
         )
 
-    failed = [result for result in results if not result.ok]
-    logger.info(
-        "Pipeline summary: %s",
-        ", ".join(
-            f"{result.name}={'ok' if result.ok else 'failed'} ({result.detail})"
-            for result in results
-        )
-        or "no steps selected",
-    )
+    summary = ", ".join(
+        f"{r.name}={'ok' if r.ok else 'failed'} ({r.detail})" for r in results
+    ) or "no steps selected"
+    logger.info("Pipeline summary: %s", summary)
+
+    failed = [r for r in results if not r.ok]
+    empty_critical = [r for r in results if r.ok and r.name in CRITICAL_EMPTY_STEPS and r.count == 0]
+
+    # dry-run 不告警（无写库无推送）。
+    if not args.dry_run and (failed or empty_critical):
+        send_pipeline_alert(failed, empty_critical, summary)
+
+    if empty_critical:
+        logger.warning("Critical steps returned 0 records: %s", [r.name for r in empty_critical])
     if failed:
         logger.error("Pipeline finished with %s failed step(s)", len(failed))
+        if not args.dry_run:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
