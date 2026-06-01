@@ -8,6 +8,8 @@ from typing import Any
 from dotenv import load_dotenv
 from supabase import Client, create_client
 
+from utils.validation import sanitize_rows
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +34,10 @@ class SupabaseRepository:
             logger.info("No Slickdeals deals to upsert")
             return []
 
+        deals = sanitize_rows("slickdeals_deals", deals, ["deal_id"])
+        if not deals:
+            return []
+
         response = (
             self.client.table("slickdeals_deals")
             .upsert(deals, on_conflict="deal_id")
@@ -46,6 +52,10 @@ class SupabaseRepository:
             logger.info("No Amazon snapshots to insert")
             return []
 
+        snapshots = sanitize_rows("amazon_snapshots", snapshots, ["asin"])
+        if not snapshots:
+            return []
+
         response = self.client.table("amazon_snapshots").insert(snapshots).execute()
         logger.info("Inserted %s Amazon snapshots", len(response.data or []))
         return response.data or []
@@ -54,6 +64,10 @@ class SupabaseRepository:
         """Insert or update Amazon best-seller ranks by category, ASIN, and date."""
         if not rows:
             logger.info("No Amazon best-seller rows to upsert")
+            return []
+
+        rows = sanitize_rows("amazon_bestsellers", rows, ["category_id", "asin", "snapshot_date"])
+        if not rows:
             return []
 
         response = (

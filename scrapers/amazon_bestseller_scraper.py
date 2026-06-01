@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import keepa
 from dotenv import load_dotenv
@@ -53,7 +54,9 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
         wait=True,
     )
 
+    tz = ZoneInfo(os.getenv("TIMEZONE", "Asia/Shanghai"))
     snapshot_at = datetime.now(timezone.utc)
+    snapshot_date = snapshot_at.astimezone(tz).date().isoformat()
     rows = [
         {
             "category_id": category_id,
@@ -61,7 +64,7 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
             "rank": rank,
             "asin": asin.upper(),
             "is_tracked": asin.upper() in tracked_asins,
-            "snapshot_date": snapshot_at.date().isoformat(),
+            "snapshot_date": snapshot_date,
             "snapshot_at": snapshot_at.isoformat(),
         }
         for rank, asin in enumerate(asin_list[:requested_limit], start=1)
