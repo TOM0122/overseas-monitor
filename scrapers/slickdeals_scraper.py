@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -332,113 +332,6 @@ def parse_deal_link(
         "posted_at": posted_at,
         "scraped_at": scraped_at.isoformat(),
     }
-
-
-def find_result_nodes(soup: BeautifulSoup) -> list[Tag]:
-    selectors = [
-        "[data-thread-id]",
-        "[data-testid*='deal']",
-        "li.resultRow",
-        "div.resultRow",
-        "div.dealTile",
-        "li.dealTile",
-        "div[class*='dealCard']",
-        "li[class*='dealCard']",
-        "div[class*='DealCard']",
-        "li[class*='DealCard']",
-        "div[class*='result']",
-        "li[class*='result']",
-        "article",
-    ]
-
-    seen: set[int] = set()
-    nodes: list[Tag] = []
-    for selector in selectors:
-        for node in soup.select(selector):
-            object_id = id(node)
-            if object_id in seen:
-                continue
-            if extract_deal_id(node) and extract_title_and_url(node)[0]:
-                seen.add(object_id)
-                nodes.append(node)
-    return nodes
-
-
-def parse_deal_node(
-    node: Tag,
-    keyword_config: KeywordConfig,
-    brands: list[str],
-) -> dict | None:
-    deal_id = extract_deal_id(node)
-    title, url = extract_title_and_url(node)
-    if not deal_id or not title:
-        return None
-
-    price = extract_price(node)
-    original_price = extract_original_price(node, price)
-    discount_pct = extract_discount_pct(node, price, original_price)
-
-    scraped_at = datetime.now(timezone.utc)
-    return {
-        "deal_id": deal_id,
-        "title": title,
-        "brand": extract_brand(title, brands),
-        "category": keyword_config.category,
-        "price": price,
-        "original_price": original_price,
-        "discount_pct": discount_pct,
-        "url": url,
-        "thumbs_up": extract_thumbs_up(node),
-        "comments_count": extract_comments_count(node),
-        "posted_at": extract_posted_at(node, scraped_at),
-        "scraped_at": scraped_at.isoformat(),
-    }
-
-
-def extract_deal_id(node: Tag) -> str | None:
-    for attr in ("data-thread-id", "data-content-id", "data-id"):
-        value = node.get(attr)
-        if value:
-            return str(value).strip()
-
-    node_id = str(node.get("id", ""))
-    id_match = re.search(r"(\d{4,})", node_id)
-    if id_match:
-        return id_match.group(1)
-
-    _, url = extract_title_and_url(node)
-    if not url:
-        return None
-
-    return extract_thread_id_from_url(url)
-
-
-def extract_title_and_url(node: Tag) -> tuple[str | None, str | None]:
-    selectors = [
-        "a.dealTitle",
-        "a.itemTitle",
-        ".dealTitle a",
-        ".itemTitle a",
-        "[class*='dealTitle'] a",
-        "[class*='DealTitle'] a",
-        "[class*='itemTitle'] a",
-        "[class*='title'] a",
-        "a[href*='/f/']",
-    ]
-    link: Tag | None = None
-    for selector in selectors:
-        selected = node.select_one(selector)
-        if selected and selected.get_text(strip=True):
-            link = selected
-            break
-
-    if not link:
-        return None, None
-
-    title = normalize_spaces(link.get_text(" ", strip=True))
-    href = str(link.get("href", "")).strip()
-    url = urljoin(SLICKDEALS_BASE_URL, href) if href else None
-    return title, url
 
 
 def extract_price(node: Tag) -> float | None:
@@ -784,10 +677,6 @@ def infer_brand_from_title(title: str) -> str | None:
     if not match:
         return None
     return match.group(1)
-
-
-def build_search_url(keyword: str) -> str:
-    return f"{SEARCH_URL}?{urlencode({'q': keyword, 'src': 'SearchBarV2', 'isUserSearch': '1'})}"
 
 
 def save_debug_html(keyword: str, html: str, suffix: str) -> Path:

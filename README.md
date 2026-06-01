@@ -53,6 +53,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+开发测试依赖：
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+```
+
 3. 创建本地环境变量：
 
 ```bash
@@ -60,6 +66,13 @@ cp .env.example .env
 ```
 
 然后填写 `.env` 中的 Supabase、Keepa、DeepSeek API、钉钉 Webhook 配置。
+
+### 运行测试
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
+```
 
 4. 在 Supabase SQL Editor 中创建数据表：
 
