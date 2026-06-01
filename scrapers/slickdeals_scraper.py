@@ -713,6 +713,10 @@ _FAN_NON_PRODUCT_PATTERNS = (
     r"fans?[-\s]?mail",         # Fan Mail
     r"fan[-\s]?fiction",        # Fan Fiction
     r"fans\s*:",                # "Dunkin' Fans:"（复数+冒号，典型的「面向受众」表达）
+    # 「为某受众群体」的表达，如 "...for Soccer Fans"、"for true sports fans"
+    r"for[-\s]+(?:[a-z'’\-]+[-\s]+){0,3}fans?\b",
+    # 常见受众限定词 + fans（球迷/乐迷/影迷等）
+    r"(?:soccer|football|sports?|baseball|basketball|hockey|nfl|nba|mlb|music|movie|concert|anime|k-?pop)[-\s]+fans?",
 )
 
 
