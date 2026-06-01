@@ -28,6 +28,7 @@ from scrapers.slickdeals_scraper import (
     normalize_spaces,
     parse_discount_pct,
     parse_money,
+    request_with_retry,
 )
 from utils.db import get_repository
 
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 HIP2SAVE_BASE_URL = "https://hip2save.com"
 SOURCE = "hip2save"
+DISCOUNT_DISCREPANCY_PP = 10.0  # 文字折扣与计算折扣差异超过该百分点时记日志
 
 
 @dataclass(frozen=True)
@@ -106,8 +108,7 @@ def fetch_search_page(session: requests.Session, keyword: str) -> str:
 
 
 def fetch_url(session: requests.Session, url: str) -> str:
-    response = session.get(url, headers=build_headers(), timeout=20)
-    response.raise_for_status()
+    response = request_with_retry(session, url, headers_factory=build_headers)
     return response.text
 
 
@@ -171,7 +172,7 @@ def parse_detail_page(
         "deal_id": f"{SOURCE}:{stable_slug(link.url)}",
         "source": SOURCE,
         "title": title,
-        "brand": match_monitored_brand(title, monitored_brands),
+        "brand": match_monitored_brand(title, monitored_brands, url=link.url),
         "category": keyword_config.category,
         "price": price,
         "original_price": original_price,
@@ -240,23 +241,36 @@ def extract_original_price(
     return None
 
 
+def _scan_textual_discount(soup: BeautifulSoup, body_text: str) -> float | None:
+    for selector in ("[class*='discount']", "[class*='save']", "[class*='off']"):
+        for node in soup.select(selector):
+            value = parse_discount_pct(node.get_text(" ", strip=True))
+            if value is not None:
+                return value
+    return parse_discount_pct(body_text)
+
+
 def extract_discount_pct(
     soup: BeautifulSoup,
     body_text: str,
     price: float | None,
     original_price: float | None,
 ) -> float | None:
-    for selector in ("[class*='discount']", "[class*='save']", "[class*='off']"):
-        for node in soup.select(selector):
-            value = parse_discount_pct(node.get_text(" ", strip=True))
-            if value is not None:
-                return value
-    value = parse_discount_pct(body_text)
-    if value is not None:
-        return value
+    computed = None
     if price is not None and original_price and original_price > price:
-        return round((original_price - price) / original_price * 100, 2)
-    return None
+        computed = round((original_price - price) / original_price * 100, 2)
+    if computed is not None:
+        textual = _scan_textual_discount(soup, body_text)
+        if textual is not None and abs(textual - computed) > DISCOUNT_DISCREPANCY_PP:
+            logger.info(
+                "hip2save discount mismatch: textual=%.1f computed=%.1f (price=%s original=%s); using computed",
+                textual,
+                computed,
+                price,
+                original_price,
+            )
+        return computed
+    return _scan_textual_discount(soup, body_text)
 
 
 def extract_comments_count(soup: BeautifulSoup, body_text: str) -> int | None:
@@ -312,10 +326,16 @@ def stable_slug(url: str) -> str:
     return slug[:160]
 
 
-def match_monitored_brand(title: str, monitored_brands: list[str]) -> str | None:
+def match_monitored_brand(title: str, monitored_brands: list[str], url: str | None = None) -> str | None:
+    haystacks = [title]
+    if url:
+        # slug 形如 /deals/diveblues-fan/ -> "deals diveblues fan"，让品牌词可被 \b 命中。
+        slug_text = urlparse(url).path.replace("/", " ").replace("-", " ")
+        haystacks.append(slug_text)
     for brand in monitored_brands:
-        if re.search(rf"\b{re.escape(brand)}\b", title, flags=re.IGNORECASE):
-            return brand
+        for haystack in haystacks:
+            if re.search(rf"\b{re.escape(brand)}\b", haystack, flags=re.IGNORECASE):
+                return brand
     return None
 
 

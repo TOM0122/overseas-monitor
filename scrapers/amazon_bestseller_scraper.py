@@ -17,6 +17,7 @@ from scrapers.keepa_fetcher import (
     DEFAULT_BSR_CATEGORY_NAME,
     clean_text,
     load_asin_configs,
+    run_with_timeout,
 )
 from utils.db import get_repository
 
@@ -43,6 +44,7 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
     enrich_brands = parse_bool(os.getenv("KEEPA_BESTSELLER_ENRICH", "true"))
     enrich_limit = int(os.getenv("KEEPA_BESTSELLER_ENRICH_LIMIT", str(requested_limit)))
     request_delay_seconds = float(os.getenv("KEEPA_REQUEST_DELAY_SECONDS", "3"))
+    keepa_timeout_seconds = float(os.getenv("KEEPA_QUERY_TIMEOUT_SECONDS", "180"))
 
     tracked_asins = {config.asin for config in load_asin_configs(CONFIG_DIR / "asin_list.txt")}
     api = keepa.Keepa(api_key, logging_level="INFO")
@@ -54,7 +56,9 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
         sublist,
         request_delay_seconds,
     )
-    asin_list = api.best_sellers_query(
+    asin_list = run_with_timeout(
+        api.best_sellers_query,
+        keepa_timeout_seconds,
         category=category_id,
         rank_avg_range=rank_avg_range,
         variations=variations,
@@ -70,6 +74,7 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
         domain=domain,
         enabled=enrich_brands,
         limit=enrich_limit,
+        timeout_seconds=keepa_timeout_seconds,
     )
 
     tz = ZoneInfo(os.getenv("TIMEZONE", "Asia/Shanghai"))
@@ -107,13 +112,16 @@ def fetch_bestseller_metadata(
     domain: str,
     enabled: bool,
     limit: int,
+    timeout_seconds: float = 180.0,
 ) -> dict[str, dict[str, str | None]]:
     """批量获取榜单 ASIN 的 brand/title。尽力而为：失败返回空 dict。"""
     if not enabled or not asins or limit <= 0:
         return {}
     targets = asins[:limit]
     try:
-        products = api.query(
+        products = run_with_timeout(
+            api.query,
+            timeout_seconds,
             targets,
             domain=domain,
             history=False,

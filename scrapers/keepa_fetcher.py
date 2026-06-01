@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -46,6 +47,7 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
     domain = os.getenv("KEEPA_DOMAIN", "US")
     stats_days = int(os.getenv("KEEPA_STATS_DAYS", "1"))
     request_delay_seconds = float(os.getenv("KEEPA_REQUEST_DELAY_SECONDS", "3"))
+    keepa_timeout_seconds = float(os.getenv("KEEPA_QUERY_TIMEOUT_SECONDS", "180"))
     fetch_buybox = parse_bool(os.getenv("KEEPA_FETCH_BUYBOX", "true"))
     bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", DEFAULT_BSR_CATEGORY_ID).strip()
     bsr_category_name = os.getenv("KEEPA_BSR_CATEGORY_NAME", DEFAULT_BSR_CATEGORY_NAME).strip()
@@ -67,6 +69,7 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
                 domain=domain,
                 stats_days=stats_days,
                 fetch_buybox=fetch_buybox,
+                timeout_seconds=keepa_timeout_seconds,
             )
             if not product:
                 logger.warning("No Keepa product returned for asin=%s", asin_config.asin)
@@ -163,9 +166,12 @@ def fetch_product(
     domain: str,
     stats_days: int,
     fetch_buybox: bool,
+    timeout_seconds: float = 180.0,
 ) -> dict[str, Any] | None:
-    # wait=True lets keepa-python pause when token balance is insufficient.
-    products = api.query(
+    # wait=True lets keepa-python pause when token balance is insufficient; add a wall-clock cap.
+    products = run_with_timeout(
+        api.query,
+        timeout_seconds,
         asin,
         domain=domain,
         stats=stats_days,
@@ -321,6 +327,26 @@ def clean_text(value: Any) -> str | None:
 
 def parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def run_with_timeout(func, timeout_seconds: float, /, *args, **kwargs):
+    """给阻塞调用加 wall-clock 超时。超时抛 TimeoutError，避免 cron 无限卡住。"""
+    box: dict[str, Any] = {}
+
+    def target() -> None:
+        try:
+            box["value"] = func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+    if thread.is_alive():
+        raise TimeoutError(f"Keepa call exceeded {timeout_seconds:.0f}s timeout")
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
 
 
 def sanitize_error(exc: Exception) -> str:

@@ -143,7 +143,6 @@ def read_non_comment_lines(path: Path) -> Iterable[tuple[int, str]]:
 
 def fetch_search_page(session: requests.Session, keyword: str) -> str:
     warm_up_session(session)
-    headers = build_headers()
     params = {
         "q": keyword,
         "src": "SearchBarV2",
@@ -151,12 +150,7 @@ def fetch_search_page(session: requests.Session, keyword: str) -> str:
         "hideexpired": "1",
         "sort": "rating",
     }
-    response = session.get(SEARCH_URL, params=params, headers=headers, timeout=20)
-    if response.status_code == 403:
-        logger.warning("Slickdeals returned 403 for keyword=%r; retrying once", keyword)
-        time.sleep(random.uniform(5, 8))
-        response = session.get(SEARCH_URL, params=params, headers=build_headers(), timeout=20)
-    response.raise_for_status()
+    response = request_with_retry(session, SEARCH_URL, headers_factory=build_headers, params=params)
     return response.text
 
 
@@ -183,6 +177,53 @@ def build_headers() -> dict[str, str]:
         "Sec-Fetch-Site": "same-origin",
         "Upgrade-Insecure-Requests": "1",
     }
+
+
+def _backoff_sleep(base_backoff: float, attempt: int) -> None:
+    delay = base_backoff * (2 ** (attempt - 1)) + random.uniform(0, 1.5)
+    logger.info("Backing off %.1fs before retry", delay)
+    time.sleep(delay)
+
+
+def request_with_retry(
+    session: requests.Session,
+    url: str,
+    *,
+    headers_factory,
+    params: dict | None = None,
+    max_retries: int | None = None,
+    base_backoff: float | None = None,
+    timeout: int = 20,
+) -> requests.Response:
+    """GET with exponential backoff and jitter for retryable HTTP/network errors."""
+    max_retries = max_retries if max_retries is not None else int(os.getenv("SCRAPER_MAX_RETRIES", "3"))
+    base_backoff = base_backoff if base_backoff is not None else float(os.getenv("SCRAPER_BACKOFF_SECONDS", "3"))
+    last_response: requests.Response | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = session.get(url, params=params, headers=headers_factory(), timeout=timeout)
+            last_response = response
+            if response.status_code in (403, 429) or response.status_code >= 500:
+                logger.warning(
+                    "Retryable HTTP %s url=%s attempt=%s/%s",
+                    response.status_code,
+                    url,
+                    attempt,
+                    max_retries,
+                )
+                if attempt < max_retries:
+                    _backoff_sleep(base_backoff, attempt)
+                    continue
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            logger.warning("Request error url=%s attempt=%s/%s: %s", url, attempt, max_retries, exc)
+            if attempt >= max_retries:
+                raise
+            _backoff_sleep(base_backoff, attempt)
+    assert last_response is not None
+    last_response.raise_for_status()
+    return last_response
 
 
 def parse_search_results(
