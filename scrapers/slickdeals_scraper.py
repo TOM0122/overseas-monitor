@@ -703,10 +703,27 @@ def parse_datetime(value: str) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+# "fan"/"fans" 作为粉丝/受众/活动名出现，而非产品时的已知短语。
+_FAN_NON_PRODUCT_PATTERNS = (
+    r"fans?[-\s]?favorites?",   # Fan-Favorite / Fan Favorites
+    r"fans?[-\s]?fest",         # Fan Fest
+    r"fans?[-\s]?club",         # Fan Club
+    r"fans?[-\s]?cave",         # Fan Cave
+    r"fans?[-\s]?gear",         # Fan Gear
+    r"fans?[-\s]?mail",         # Fan Mail
+    r"fan[-\s]?fiction",        # Fan Fiction
+    r"fans\s*:",                # "Dunkin' Fans:"（复数+冒号，典型的「面向受众」表达）
+)
+
+
 def is_relevant_to_category(title: str, url: str, category: str) -> bool:
     text = f"{title} {urlparse(url).path}".lower()
     if category == "fan":
-        return bool(re.search(r"\bfans?\b(?![-\s]?favorites?)", text))
+        # 先剔除非产品用法，再要求仍存在真正的 fan 词。
+        stripped = text
+        for pattern in _FAN_NON_PRODUCT_PATTERNS:
+            stripped = re.sub(pattern, " ", stripped)
+        return bool(re.search(r"\bfans?\b", stripped))
     if category == "hand_warmer":
         return bool(re.search(r"\bhand[-\s]?warmers?\b", text))
     return True
