@@ -35,6 +35,8 @@ def run(
     report_date = report_date or datetime.now(tz).date()
     top_deals_limit = int(os.getenv("ANALYSIS_TOP_DEALS_LIMIT", "20"))
     offsite_category = os.getenv("ANALYSIS_OFFSITE_CATEGORY", "fan")
+    category_label = os.getenv("ANALYSIS_OFFSITE_CATEGORY_LABEL", "手持风扇")
+    focus_brand = os.getenv("ANALYSIS_FOCUS_BRAND", "Diveblues")
     max_price = float(os.getenv("ANALYSIS_MAX_REASONABLE_PRICE", "200"))
     bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", "3303867011")
     bsr_category_name = os.getenv("KEEPA_BSR_CATEGORY_NAME", "Best Sellers in Personal Fans")
@@ -80,6 +82,8 @@ def run(
         bestsellers_today=bestsellers_today,
         bestsellers_yesterday=bestsellers_yesterday,
         rank_up_threshold=rank_up_threshold,
+        category_label=category_label,
+        focus_brand=focus_brand,
     )
 
     if dry_run:
@@ -120,6 +124,8 @@ def build_report_payload(
     bestsellers_today: list[dict[str, Any]] | None = None,
     bestsellers_yesterday: list[dict[str, Any]] | None = None,
     rank_up_threshold: int = 10,
+    category_label: str = "手持风扇",
+    focus_brand: str = "Diveblues",
 ) -> dict[str, Any]:
     bsr_today = filter_bsr_snapshots(amazon_today, bsr_category_id)
     bsr_yesterday = filter_bsr_snapshots(amazon_yesterday, bsr_category_id)
@@ -134,6 +140,8 @@ def build_report_payload(
     return {
         "report_date": report_date.isoformat(),
         "timezone": str(tz),
+        "category_label": category_label,
+        "focus_brand": focus_brand,
         "generated_at": datetime.now(timezone.utc).astimezone(tz).isoformat(),
         "monitored_brands": monitored_brands,
         "bsr_category": {
@@ -150,7 +158,7 @@ def build_report_payload(
                 1 for asin in today_latest if asin in yesterday_latest
             ),
         },
-        "bsr_monitor": summarize_bsr(bsr_items),
+        "bsr_monitor": summarize_bsr(bsr_items, focus_brand),
         "bestseller_monitor": summarize_bestseller_rankings(
             bestsellers_today or [],
             bestsellers_yesterday or [],
@@ -324,10 +332,11 @@ def build_bsr_item(
     }
 
 
-def summarize_bsr(items: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_bsr(items: list[dict[str, Any]], focus_brand: str) -> dict[str, Any]:
+    focus_key = normalize_brand_key(focus_brand)
     return {
-        "diveblues": [item for item in items if normalize_brand_key(item.get("brand")) == "diveblues"],
-        "competitors": [item for item in items if normalize_brand_key(item.get("brand")) != "diveblues"],
+        "focus": [item for item in items if normalize_brand_key(item.get("brand")) == focus_key],
+        "competitors": [item for item in items if normalize_brand_key(item.get("brand")) != focus_key],
     }
 
 
