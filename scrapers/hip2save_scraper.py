@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import quote_plus, urljoin, urlparse
+from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -22,7 +22,6 @@ from scrapers.slickdeals_scraper import (
     PROJECT_ROOT,
     USER_AGENTS,
     KeywordConfig,
-    extract_brand,
     is_relevant_to_category,
     load_brand_list,
     load_keyword_configs,
@@ -133,13 +132,18 @@ def find_deal_links(html: str, keyword_config: KeywordConfig) -> list[Hip2SaveLi
             continue
         if "/deals/" not in parsed.path:
             continue
+        # 跳过社交分享变体（?share=facebook/sms/custom-...），它们会重定向到站外。
+        if "share" in parse_qs(parsed.query):
+            continue
+        # 规范化为 scheme://host/path，让 ?share= / #respond 等同一 deal 的变体合并为一次请求。
+        canonical_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
         title = normalize_spaces(link.get_text(" ", strip=True))
-        if title and not is_relevant_to_category(title, url, keyword_config.category):
+        if title and not is_relevant_to_category(title, canonical_url, keyword_config.category):
             continue
-        if url in seen:
+        if canonical_url in seen:
             continue
-        seen.add(url)
-        links.append(Hip2SaveLink(url=url, title=title or None))
+        seen.add(canonical_url)
+        links.append(Hip2SaveLink(url=canonical_url, title=title or None))
     return links
 
 
@@ -157,7 +161,7 @@ def parse_detail_page(
         return None
 
     body_text = normalize_spaces(soup.get_text(" ", strip=True))
-    price = extract_price(soup, body_text)
+    price = extract_price(soup, body_text, title)
     original_price = extract_original_price(soup, body_text, price)
     discount_pct = extract_discount_pct(soup, body_text, price, original_price)
     posted_at = extract_posted_at(soup, body_text)
@@ -167,7 +171,7 @@ def parse_detail_page(
         "deal_id": f"{SOURCE}:{stable_slug(link.url)}",
         "source": SOURCE,
         "title": title,
-        "brand": extract_brand(title, monitored_brands),
+        "brand": match_monitored_brand(title, monitored_brands),
         "category": keyword_config.category,
         "price": price,
         "original_price": original_price,
@@ -193,13 +197,28 @@ def extract_title(soup: BeautifulSoup) -> str | None:
     return None
 
 
-def extract_price(soup: BeautifulSoup, body_text: str) -> float | None:
+def extract_price(soup: BeautifulSoup, body_text: str, title: str | None = None) -> float | None:
+    if title:
+        price = price_from_title(title)
+        if price is not None:
+            return price
     for selector in ("[class*='price']", ".entry-content strong", "strong"):
         for node in soup.select(selector):
             value = parse_money(node.get_text(" ", strip=True))
             if value is not None:
                 return value
     return parse_money(body_text)
+
+
+def price_from_title(title: str) -> float | None:
+    # 先去掉原价短语（如 "(Reg. $16)"），避免把原价当成售价读出来。
+    cleaned = re.sub(
+        r"\(?\s*(?:regularly|reg\.?|was|retail|orig(?:inally)?\.?)\s*\$\s*[0-9][0-9,]*(?:\.[0-9]{1,2})?\s*\)?",
+        " ",
+        title,
+        flags=re.IGNORECASE,
+    )
+    return parse_money(cleaned)
 
 
 def extract_original_price(
@@ -291,6 +310,13 @@ def stable_slug(url: str) -> str:
     path = urlparse(url).path.strip("/")
     slug = path.split("/")[-1] if path else re.sub(r"\W+", "-", url)
     return slug[:160]
+
+
+def match_monitored_brand(title: str, monitored_brands: list[str]) -> str | None:
+    for brand in monitored_brands:
+        if re.search(rf"\b{re.escape(brand)}\b", title, flags=re.IGNORECASE):
+            return brand
+    return None
 
 
 def dedupe_deals(deals: list[dict]) -> list[dict]:
