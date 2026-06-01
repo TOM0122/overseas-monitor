@@ -12,7 +12,12 @@ from zoneinfo import ZoneInfo
 import keepa
 from dotenv import load_dotenv
 
-from scrapers.keepa_fetcher import DEFAULT_BSR_CATEGORY_ID, DEFAULT_BSR_CATEGORY_NAME, load_asin_configs
+from scrapers.keepa_fetcher import (
+    DEFAULT_BSR_CATEGORY_ID,
+    DEFAULT_BSR_CATEGORY_NAME,
+    clean_text,
+    load_asin_configs,
+)
 from utils.db import get_repository
 
 logger = logging.getLogger(__name__)
@@ -35,15 +40,19 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
     rank_avg_range = int(os.getenv("KEEPA_BESTSELLER_RANK_AVG_RANGE", "0"))
     sublist = parse_bool(os.getenv("KEEPA_BESTSELLER_SUBLIST", "true"))
     variations = parse_bool(os.getenv("KEEPA_BESTSELLER_VARIATIONS", "false"))
+    enrich_brands = parse_bool(os.getenv("KEEPA_BESTSELLER_ENRICH", "true"))
+    enrich_limit = int(os.getenv("KEEPA_BESTSELLER_ENRICH_LIMIT", str(requested_limit)))
+    request_delay_seconds = float(os.getenv("KEEPA_REQUEST_DELAY_SECONDS", "3"))
 
     tracked_asins = {config.asin for config in load_asin_configs(CONFIG_DIR / "asin_list.txt")}
     api = keepa.Keepa(api_key, logging_level="INFO")
     logger.info(
-        "Fetching Keepa best sellers category_id=%s category_name=%r limit=%s sublist=%s",
+        "Fetching Keepa best sellers category_id=%s category_name=%r limit=%s sublist=%s request_delay=%ss",
         category_id,
         category_name,
         requested_limit,
         sublist,
+        request_delay_seconds,
     )
     asin_list = api.best_sellers_query(
         category=category_id,
@@ -54,6 +63,15 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
         wait=True,
     )
 
+    ranked_asins = [asin.upper() for asin in asin_list[:requested_limit]]
+    metadata = fetch_bestseller_metadata(
+        api,
+        ranked_asins,
+        domain=domain,
+        enabled=enrich_brands,
+        limit=enrich_limit,
+    )
+
     tz = ZoneInfo(os.getenv("TIMEZONE", "Asia/Shanghai"))
     snapshot_at = datetime.now(timezone.utc)
     snapshot_date = snapshot_at.astimezone(tz).date().isoformat()
@@ -62,12 +80,14 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
             "category_id": category_id,
             "category_name": category_name,
             "rank": rank,
-            "asin": asin.upper(),
-            "is_tracked": asin.upper() in tracked_asins,
+            "asin": asin,
+            "is_tracked": asin in tracked_asins,
+            "brand": metadata.get(asin, {}).get("brand"),
+            "title": metadata.get(asin, {}).get("title"),
             "snapshot_date": snapshot_date,
             "snapshot_at": snapshot_at.isoformat(),
         }
-        for rank, asin in enumerate(asin_list[:requested_limit], start=1)
+        for rank, asin in enumerate(ranked_asins, start=1)
     ]
     logger.info("Collected %s Amazon best-seller rows", len(rows))
 
@@ -78,6 +98,45 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
     repository = get_repository()
     repository.upsert_amazon_bestsellers(rows)
     return rows
+
+
+def fetch_bestseller_metadata(
+    api: "keepa.Keepa",
+    asins: list[str],
+    *,
+    domain: str,
+    enabled: bool,
+    limit: int,
+) -> dict[str, dict[str, str | None]]:
+    """批量获取榜单 ASIN 的 brand/title。尽力而为：失败返回空 dict。"""
+    if not enabled or not asins or limit <= 0:
+        return {}
+    targets = asins[:limit]
+    try:
+        products = api.query(
+            targets,
+            domain=domain,
+            history=False,
+            rating=False,
+            buybox=False,
+            wait=True,
+            progress_bar=False,
+        )
+    except Exception as exc:
+        logger.warning("Bestseller brand enrichment failed: %s", exc)
+        return {}
+
+    metadata: dict[str, dict[str, str | None]] = {}
+    for product in products or []:
+        asin = str(product.get("asin") or "").upper()
+        if not asin:
+            continue
+        metadata[asin] = {
+            "brand": clean_text(product.get("brand")),
+            "title": clean_text(product.get("title")),
+        }
+    logger.info("Enriched %s/%s best-seller ASINs with brand/title", len(metadata), len(targets))
+    return metadata
 
 
 def parse_bool(value: str) -> bool:

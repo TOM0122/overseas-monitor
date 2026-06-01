@@ -5,6 +5,8 @@ create table if not exists amazon_bestsellers (
   rank int not null,
   asin text not null,
   is_tracked boolean default false,
+  brand text,
+  title text,
   snapshot_date date not null,
   snapshot_at timestamptz default now(),
   unique(category_id, asin, snapshot_date)

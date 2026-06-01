@@ -412,6 +412,8 @@ def normalize_bestseller_row(row: dict[str, Any]) -> dict[str, Any]:
         "asin": row.get("asin"),
         "rank": to_int_or_none(row.get("rank")),
         "is_tracked": row.get("is_tracked"),
+        "brand": row.get("brand"),
+        "title": row.get("title"),
         "snapshot_at": row.get("snapshot_at"),
     }
 

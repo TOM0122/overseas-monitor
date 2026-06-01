@@ -104,6 +104,8 @@ create table amazon_bestsellers (
   rank int not null,
   asin text not null,
   is_tracked boolean default false,
+  brand text,
+  title text,
   snapshot_date date not null,
   snapshot_at timestamptz default now(),
   unique(category_id, asin, snapshot_date)
@@ -144,10 +146,16 @@ create table if not exists amazon_bestsellers (
   rank int not null,
   asin text not null,
   is_tracked boolean default false,
+  brand text,
+  title text,
   snapshot_date date not null,
   snapshot_at timestamptz default now(),
   unique(category_id, asin, snapshot_date)
 );
+
+alter table public.amazon_bestsellers
+    add column if not exists brand text,
+    add column if not exists title text;
 
 create index if not exists idx_amazon_bestsellers_category_snapshot_rank
 on amazon_bestsellers(category_id, snapshot_at, rank);
@@ -244,9 +252,12 @@ KEEPA_BESTSELLER_LIMIT=100
 KEEPA_BESTSELLER_RANK_AVG_RANGE=0
 KEEPA_BESTSELLER_SUBLIST=true
 KEEPA_BESTSELLER_VARIATIONS=false
+KEEPA_BESTSELLER_ENRICH=true
+KEEPA_BESTSELLER_ENRICH_LIMIT=100
 ```
 
 `KEEPA_FETCH_BUYBOX=true` 会额外消耗 Keepa token，但可以得到 `buy_box_price`。如果 token 紧张，可以临时改成 `false`，此时 `buy_box_price` 可能为空。
+`KEEPA_BESTSELLER_ENRICH=true` 会为类目榜单 ASIN 额外补充 `brand/title`，每个 ASIN 约消耗 1 个 Keepa token；token 紧张时可调小 `KEEPA_BESTSELLER_ENRICH_LIMIT` 或设为 `false`。
 
 验证 ASIN 拉取，不写数据库：
 
@@ -374,6 +385,8 @@ KEEPA_BESTSELLER_LIMIT
 KEEPA_BESTSELLER_RANK_AVG_RANGE
 KEEPA_BESTSELLER_SUBLIST
 KEEPA_BESTSELLER_VARIATIONS
+KEEPA_BESTSELLER_ENRICH
+KEEPA_BESTSELLER_ENRICH_LIMIT
 LLM_BASE_URL
 LLM_API_KEY
 LLM_MODEL
