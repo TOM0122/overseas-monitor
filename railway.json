@@ -2,6 +2,6 @@
   "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
     "startCommand": "python main.py",
-    "cronSchedule": "0 1 * * *"
+    "cronSchedule": "50 0 * * *"
   }
 }

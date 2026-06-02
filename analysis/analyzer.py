@@ -158,7 +158,12 @@ def build_report_payload(
                 1 for asin in today_latest if asin in yesterday_latest
             ),
         },
-        "bsr_monitor": summarize_bsr(bsr_items, focus_brand),
+        "bsr_monitor": summarize_bsr_monitor(
+            bsr_items,
+            bestsellers_today or [],
+            bestsellers_yesterday or [],
+            focus_brand,
+        ),
         "bestseller_monitor": summarize_bestseller_rankings(
             bestsellers_today or [],
             bestsellers_yesterday or [],
@@ -313,16 +318,19 @@ def build_bsr_item(
     yesterday_bsr = to_int_or_none(yesterday.get("bsr")) if yesterday else None
     bsr_abs = diff(current_bsr, yesterday_bsr)
     return {
+        "source": "amazon_snapshots",
         "asin": today.get("asin"),
         "brand": today.get("brand"),
         "title": today.get("title"),
         "category": today.get("category"),
         "snapshot_at": to_local_iso(today.get("snapshot_at"), tz),
+        "current_rank": current_bsr,
+        "yesterday_rank": yesterday_bsr,
+        "rank_change": bsr_abs,
+        "rank_change_display": format_rank_change(bsr_abs),
         "current_bsr": current_bsr,
         "yesterday_bsr": yesterday_bsr,
         "bsr_change_abs": bsr_abs,
-        "bsr_change_pct": pct_change(current_bsr, yesterday_bsr),
-        "bsr_direction": bsr_direction(bsr_abs),
         "data_status": "ok" if current_bsr is not None and yesterday_bsr is not None else "数据缺失",
         "missing_fields": {
             "today_bsr": current_bsr is None,
@@ -330,6 +338,62 @@ def build_bsr_item(
         },
         "yesterday_snapshot_at": to_local_iso(yesterday.get("snapshot_at"), tz) if yesterday else None,
     }
+
+
+def summarize_bsr_monitor(
+    snapshot_items: list[dict[str, Any]],
+    bestsellers_today: list[dict[str, Any]],
+    bestsellers_yesterday: list[dict[str, Any]],
+    focus_brand: str,
+) -> dict[str, Any]:
+    # 优先使用 amazon_bestsellers 的类目榜单 rank，和 Amazon Best Sellers 页面口径一致。
+    items = build_bestseller_bsr_items(bestsellers_today, bestsellers_yesterday)
+    if not items:
+        items = snapshot_items
+    return summarize_bsr(items, focus_brand)
+
+
+def build_bestseller_bsr_items(
+    today_rows: list[dict[str, Any]],
+    yesterday_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    today_latest = latest_bestseller_by_asin(today_rows)
+    yesterday_latest = latest_bestseller_by_asin(yesterday_rows)
+    tracked_today = [
+        row for row in today_latest.values()
+        if row.get("is_tracked") is True
+    ]
+    tracked_today.sort(key=lambda row: to_int_or_none(row.get("rank")) or 999999)
+
+    items: list[dict[str, Any]] = []
+    for row in tracked_today:
+        asin = str(row.get("asin") or "").upper()
+        previous = yesterday_latest.get(asin)
+        current_rank = to_int_or_none(row.get("rank"))
+        yesterday_rank = to_int_or_none(previous.get("rank")) if previous else None
+        rank_change = diff(current_rank, yesterday_rank)
+        items.append(
+            {
+                "source": "amazon_bestsellers",
+                "asin": row.get("asin"),
+                "brand": row.get("brand"),
+                "title": row.get("title"),
+                "snapshot_at": row.get("snapshot_at"),
+                "current_rank": current_rank,
+                "yesterday_rank": yesterday_rank,
+                "rank_change": rank_change,
+                "rank_change_display": format_rank_change(rank_change),
+                "current_bsr": current_rank,
+                "yesterday_bsr": yesterday_rank,
+                "bsr_change_abs": rank_change,
+                "data_status": "ok" if current_rank is not None and yesterday_rank is not None else "数据缺失",
+                "missing_fields": {
+                    "today_rank": current_rank is None,
+                    "yesterday_rank": yesterday_rank is None,
+                },
+            }
+        )
+    return items
 
 
 def summarize_bsr(items: list[dict[str, Any]], focus_brand: str) -> dict[str, Any]:
@@ -475,6 +539,19 @@ def diff(current: Any, previous: Any) -> float | None:
     if current_number is None or previous_number is None:
         return None
     return round(current_number - previous_number, 4)
+
+
+def format_rank_change(change_abs: Any) -> str:
+    change = to_float_or_none(change_abs)
+    if change is None:
+        return "数据缺失"
+    if change == 0:
+        return "持平"
+    if float(change).is_integer():
+        change_text = f"{int(change):+d}"
+    else:
+        change_text = f"{change:+g}"
+    return f"{change_text} 名"
 
 
 def pct_change(current: Any, previous: Any) -> float | None:

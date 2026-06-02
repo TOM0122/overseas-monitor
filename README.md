@@ -328,6 +328,7 @@ ANALYSIS_OFFSITE_CATEGORY=fan
 ANALYSIS_OFFSITE_CATEGORY_LABEL=手持风扇
 ANALYSIS_FOCUS_BRAND=Diveblues
 ANALYSIS_MAX_REASONABLE_PRICE=200
+SLICKDEALS_MAX_POST_AGE_DAYS=30
 KEEPA_BSR_CATEGORY_ID=3303867011
 KEEPA_BSR_CATEGORY_NAME=Best Sellers in Personal Fans
 BESTSELLER_RANK_UP_THRESHOLD=10
@@ -427,6 +428,7 @@ ANALYSIS_OFFSITE_CATEGORY
 ANALYSIS_OFFSITE_CATEGORY_LABEL
 ANALYSIS_FOCUS_BRAND
 ANALYSIS_MAX_REASONABLE_PRICE
+SLICKDEALS_MAX_POST_AGE_DAYS
 BESTSELLER_RANK_UP_THRESHOLD
 ```
 
@@ -434,8 +436,8 @@ BESTSELLER_RANK_UP_THRESHOLD
 
 5. 确认 Deploy 设置：
    - Start Command：`python main.py`
-   - Cron Schedule：`0 1 * * *`
-   - 对应北京时间每天 09:00，因为 Railway Cron 使用 UTC 表达。
+   - Cron Schedule：`50 0 * * *`
+   - 对应北京时间每天 08:50，因为 Railway Cron 使用 UTC 表达；预留约 10 分钟运行时间，目标是北京时间 09:00 前后收到报告。
 
 6. 首次部署后，在 Railway Logs 里确认三步都有类似日志：
 
@@ -456,7 +458,7 @@ Pipeline summary: ...
 {
   "deploy": {
     "startCommand": "python main.py",
-    "cronSchedule": "0 1 * * *"
+    "cronSchedule": "50 0 * * *"
   }
 }
 ```

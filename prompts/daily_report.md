@@ -26,7 +26,7 @@
 
 各段要求：
 - 总览：2-3 句，概括今天 `category_label` 站外整体态势，点出最值得注意的 1 个异动。
-- BSR 监测：口径为 `bsr_category.name`。先写 `bsr_monitor.focus`（自有品牌已指定 ASIN）的排名，再写 `bsr_monitor.competitors`；随后用 `bestseller_monitor` 简述类目榜单的新进榜、快速上升 ASIN，每个异动 ASIN 须带出品牌（`brand`）与简短标题（`title`），并标注是否 `focus_brand` 或重点竞品；`brand` 为空时写「品牌未知」。BSR 数值下降=排名变好，上升=排名变差。今天或昨天缺数据写「数据缺失」。
+- BSR 监测：口径为 `bsr_category.name`，优先使用 `bsr_monitor` 中 `source=amazon_bestsellers` 的类目榜单 rank。先写 `bsr_monitor.focus`（自有品牌已指定 ASIN）的当前排名和较昨日变化，再写 `bsr_monitor.competitors`；每个 ASIN 只写“当前 #N，较昨日 {rank_change_display}”，不要再追加“排名上升/排名下降”等重复解释，也不要写百分比。随后用 `bestseller_monitor` 简述类目榜单的新进榜、快速上升 ASIN，每个异动 ASIN 须带出品牌（`brand`）与简短标题（`title`），并标注是否 `focus_brand` 或重点竞品；`brand` 为空时写「品牌未知」。今天或昨天缺数据写「数据缺失」。
 - 站外每日发现（重点）：先给一段汇总——今天 Slickdeals / hip2save 上共有几家 `category_label` 品牌（`offsite.brand_count`）、促销价格区间（`offsite.price_range`）、最低价品牌及价格（`offsite.price_range.lowest_price_deal`）。随后按品牌展开：优先 `focus_brand`，再写其它重点监控品牌（`offsite.monitored_brands`，含 Deal 数、价位段、折扣力度），非重点品牌归入「其它品牌」。
 - 价格只能用 `offsite.price_range`，不要从标题年份、mAh、评论数等推断。`offsite` 已过滤为 `category_label` 品类，不要写入其它品类。
 - 建议：给 1-3 条可执行的站外运营建议，每条须绑定当天具体数据（某品牌/某价位/Deal 数/折扣），并给出明确动作（如跟价、补 Deal、调整价位段、关注某竞品上新），禁止空泛建议。
