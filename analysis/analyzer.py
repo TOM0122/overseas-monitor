@@ -402,12 +402,19 @@ def build_bestseller_bsr_items(
     return items
 
 
+def _bsr_sort_key(item: dict[str, Any]) -> tuple[bool, int]:
+    rank = to_int_or_none(item.get("current_rank"))
+    # 有排名的在前并按升序，排名缺失的统一排到最后。
+    return (rank is None, rank if rank is not None else 0)
+
+
 def summarize_bsr(items: list[dict[str, Any]], focus_brand: str) -> dict[str, Any]:
     focus_key = normalize_brand_key(focus_brand)
-    return {
-        "focus": [item for item in items if normalize_brand_key(item.get("brand")) == focus_key],
-        "competitors": [item for item in items if normalize_brand_key(item.get("brand")) != focus_key],
-    }
+    focus = [item for item in items if normalize_brand_key(item.get("brand")) == focus_key]
+    competitors = [item for item in items if normalize_brand_key(item.get("brand")) != focus_key]
+    focus.sort(key=_bsr_sort_key)
+    competitors.sort(key=_bsr_sort_key)
+    return {"focus": focus, "competitors": competitors}
 
 
 def summarize_bestseller_rankings(
