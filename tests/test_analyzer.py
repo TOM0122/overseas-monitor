@@ -59,3 +59,74 @@ def test_bsr_monitor_prefers_bestseller_rank_over_snapshot_bsr():
     assert item["current_rank"] == 10
     assert item["yesterday_rank"] == 8
     assert item["rank_change_display"] == "+2 名"
+
+
+def test_bsr_monitor_keeps_focus_snapshot_when_missing_from_bestseller_rows():
+    payload = build_report_payload(
+        report_date=date(2026, 6, 3),
+        tz=ZoneInfo("Asia/Shanghai"),
+        slickdeals=[],
+        amazon_today=[
+            {
+                "asin": "B0GCWDN43C",
+                "brand": "Diveblues",
+                "bsr": 13,
+                "bsr_category_id": "3303867011",
+                "snapshot_at": "2026-06-03T00:00:00+00:00",
+            },
+            {
+                "asin": "B07QK9C9KT",
+                "brand": "JISULIFE",
+                "bsr": 1,
+                "bsr_category_id": "3303867011",
+                "snapshot_at": "2026-06-03T00:00:00+00:00",
+            },
+        ],
+        amazon_yesterday=[
+            {
+                "asin": "B0GCWDN43C",
+                "brand": "Diveblues",
+                "bsr": 10,
+                "bsr_category_id": "3303867011",
+                "snapshot_at": "2026-06-02T00:00:00+00:00",
+            },
+            {
+                "asin": "B07QK9C9KT",
+                "brand": "JISULIFE",
+                "bsr": 2,
+                "bsr_category_id": "3303867011",
+                "snapshot_at": "2026-06-02T00:00:00+00:00",
+            },
+        ],
+        top_deals_limit=20,
+        monitored_brands=["Diveblues", "JISULIFE"],
+        bestsellers_today=[
+            {
+                "asin": "B07QK9C9KT",
+                "brand": "JISULIFE",
+                "title": "JISULIFE Fan",
+                "rank": 1,
+                "is_tracked": True,
+                "snapshot_at": "2026-06-03T00:00:00+00:00",
+            }
+        ],
+        bestsellers_yesterday=[
+            {
+                "asin": "B07QK9C9KT",
+                "brand": "JISULIFE",
+                "title": "JISULIFE Fan",
+                "rank": 2,
+                "is_tracked": True,
+                "snapshot_at": "2026-06-02T00:00:00+00:00",
+            }
+        ],
+        focus_brand="Diveblues",
+    )
+
+    focus_item = payload["bsr_monitor"]["focus"][0]
+    competitor_item = payload["bsr_monitor"]["competitors"][0]
+    assert focus_item["asin"] == "B0GCWDN43C"
+    assert focus_item["source"] == "amazon_snapshots"
+    assert focus_item["current_rank"] == 13
+    assert focus_item["rank_change_display"] == "+3 名"
+    assert competitor_item["source"] == "amazon_bestsellers"

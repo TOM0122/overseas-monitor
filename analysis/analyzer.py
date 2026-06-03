@@ -348,7 +348,13 @@ def summarize_bsr_monitor(
 ) -> dict[str, Any]:
     # 优先使用 amazon_bestsellers 的类目榜单 rank，和 Amazon Best Sellers 页面口径一致。
     items = build_bestseller_bsr_items(bestsellers_today, bestsellers_yesterday)
-    if not items:
+    if items:
+        bestseller_asins = {normalize_asin(item.get("asin")) for item in items}
+        items.extend(
+            item for item in snapshot_items
+            if normalize_asin(item.get("asin")) not in bestseller_asins
+        )
+    else:
         items = snapshot_items
     return summarize_bsr(items, focus_brand)
 
@@ -603,6 +609,10 @@ def reasonable_price_or_none(value: Any, max_reasonable_price: float) -> float |
 
 def normalize_brand_key(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def normalize_asin(value: Any) -> str:
+    return str(value or "").strip().upper()
 
 
 def load_monitored_brands() -> list[str]:

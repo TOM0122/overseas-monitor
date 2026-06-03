@@ -26,7 +26,7 @@
 
 各段要求：
 - 总览：2-3 句，概括今天 `category_label` 站外整体态势，点出最值得注意的 1 个异动。
-- BSR 监测：口径为 `bsr_category.name`，优先使用 `bsr_monitor` 中 `source=amazon_bestsellers` 的类目榜单 rank。先写 `bsr_monitor.focus`（自有品牌已指定 ASIN）的当前排名和较昨日变化，再写 `bsr_monitor.competitors`；每个 ASIN 只写“当前 #N，较昨日 {rank_change_display}”，不要再追加“排名上升/排名下降”等重复解释，也不要写百分比。随后用 `bestseller_monitor` 简述类目榜单的新进榜、快速上升 ASIN，每个异动 ASIN 须带出品牌（`brand`）与简短标题（`title`），并标注是否 `focus_brand` 或重点竞品；`brand` 为空时写「品牌未知」。今天或昨天缺数据写「数据缺失」。
+- BSR 监测：口径为 `bsr_category.name`，优先使用 `bsr_monitor` 中 `source=amazon_bestsellers` 的类目榜单 rank。先写 `bsr_monitor.focus`（自有品牌已指定 ASIN）的当前排名和较昨日变化，再写 `bsr_monitor.competitors`。自有 ASIN 和竞品 ASIN 均用紧凑 Markdown 表格呈现，建议列为「品牌 / ASIN / 当前排名 / 较昨日 / 备注」；每个 ASIN 只写“#N”和“{rank_change_display}”，不要再追加“排名上升/排名下降”等重复解释，也不要写百分比。如果 `bsr_monitor.focus` 为空，只能写「暂无自有品牌榜单/快照数据」，不要写“未配置 ASIN”。随后只简述 `bestseller_monitor.rank_gainers` / `rank_droppers` 中的快速异动 ASIN，每个异动 ASIN 须带出品牌（`brand`）与简短标题（`title`），并标注是否 `focus_brand` 或重点竞品；不要表述 `bestseller_monitor.new_entries`。`brand` 为空时写「品牌未知」。今天或昨天缺数据写「数据缺失」。
 - 站外每日发现（重点）：先给一段汇总——今天 Slickdeals / hip2save 上共有几家 `category_label` 品牌（`offsite.brand_count`）、促销价格区间（`offsite.price_range`）、最低价品牌及价格（`offsite.price_range.lowest_price_deal`）。随后按品牌展开：优先 `focus_brand`，再写其它重点监控品牌（`offsite.monitored_brands`，含 Deal 数、价位段、折扣力度），非重点品牌归入「其它品牌」。
 - 价格只能用 `offsite.price_range`，不要从标题年份、mAh、评论数等推断。`offsite` 已过滤为 `category_label` 品类，不要写入其它品类。
 - 建议：给 1-3 条可执行的站外运营建议，每条须绑定当天具体数据（某品牌/某价位/Deal 数/折扣），并给出明确动作（如跟价、补 Deal、调整价位段、关注某竞品上新），禁止空泛建议。
@@ -41,6 +41,6 @@
 
 ## 输出格式（钉钉 markdown）
 - 分段标题用 `##` / `###`，不要用一级 `#`（钉钉里过大）。
-- 列表统一用 `- `，重点用 `**加粗**`；不要使用表格（钉钉不支持，会错乱）。
+- 列表统一用 `- `，重点用 `**加粗**`；BSR 监测可使用紧凑 Markdown 表格，其它段落不要使用表格。
 - 段落/小节之间空一行；不要堆叠多余空行，不要用代码块包裹整篇内容。
 - 全文务必简洁，正文控制在约 1500 字以内，避免超出钉钉消息长度上限被截断。
