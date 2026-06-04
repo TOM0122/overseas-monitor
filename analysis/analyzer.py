@@ -38,7 +38,7 @@ def run(
     category_label = os.getenv("ANALYSIS_OFFSITE_CATEGORY_LABEL", "手持风扇")
     focus_brand = os.getenv("ANALYSIS_FOCUS_BRAND", "Diveblues")
     max_price = float(os.getenv("ANALYSIS_MAX_REASONABLE_PRICE", "200"))
-    min_offsite_price = float(os.getenv("ANALYSIS_MIN_OFFSITE_PRICE", "3"))
+    min_offsite_price = float(os.getenv("ANALYSIS_MIN_OFFSITE_PRICE", "5"))
     bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", "3303867011")
     bsr_category_name = os.getenv("KEEPA_BSR_CATEGORY_NAME", "Best Sellers in Personal Fans")
     rank_up_threshold = int(os.getenv("BESTSELLER_RANK_UP_THRESHOLD", "10"))
@@ -121,7 +121,7 @@ def build_report_payload(
     top_deals_limit: int,
     monitored_brands: list[str],
     max_reasonable_price: float = 200,
-    min_offsite_price: float = 3,
+    min_offsite_price: float = 5,
     bsr_category_id: str = "3303867011",
     bsr_category_name: str = "Best Sellers in Personal Fans",
     bestsellers_today: list[dict[str, Any]] | None = None,
@@ -198,7 +198,7 @@ def summarize_offsite_deals(
     limit: int,
     monitored_brands: list[str],
     max_reasonable_price: float,
-    min_offsite_price: float = 3,
+    min_offsite_price: float = 5,
 ) -> dict[str, Any]:
     # 价格下限：丢弃明显过低（疑似噪音/非竞品）的 Deal；价格缺失的不丢。
     filtered_deals = []

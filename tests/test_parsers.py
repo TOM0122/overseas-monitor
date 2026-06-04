@@ -44,6 +44,25 @@ def test_fan_category_excludes_toy_roundup():
     )
 
 
+def test_fan_category_excludes_food_roundup():
+    assert (
+        s.is_relevant_to_category(
+            "Peeps Fans, Get Ready: Hostess Peeps Cupcakes Are Coming Soon!",
+            "https://hip2save.com/deals/peeps-cupcakes/",
+            "fan",
+        )
+        is False
+    )
+    assert (
+        s.is_relevant_to_category(
+            "Handheld Mini Fan (Candy Pink)",
+            "https://slickdeals.net/f/1-x",
+            "fan",
+        )
+        is True
+    )
+
+
 def test_hip2save_price_from_title():
     assert h.price_from_title("Gaiatop Fan $7.19 (Reg. $14)") == 7.19
 

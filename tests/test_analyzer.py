@@ -222,3 +222,28 @@ def test_offsite_price_floor_drops_cheap_deals():
     assert "a" not in ids
     assert ids == {"b", "c"}
     assert out["price_range"]["min"] == 7.99
+
+
+def test_offsite_price_floor_default_is_five():
+    tz = ZoneInfo("Asia/Shanghai")
+    deals = [
+        {
+            "deal_id": "x",
+            "source": "slickdeals",
+            "title": "KIDEE Mini Fan",
+            "brand": "KIDEE",
+            "category": "fan",
+            "price": 4.99,
+        },
+        {
+            "deal_id": "y",
+            "source": "slickdeals",
+            "title": "Gaiatop Fan",
+            "brand": "Gaiatop",
+            "category": "fan",
+            "price": 7.99,
+        },
+    ]
+    out = summarize_offsite_deals(deals, tz, 20, ["Gaiatop"], 200.0)
+    ids = {deal["deal_id"] for deal in out["top_deals"]}
+    assert ids == {"y"}

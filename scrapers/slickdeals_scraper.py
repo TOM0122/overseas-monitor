@@ -662,6 +662,16 @@ _FAN_HARD_EXCLUDE_PATTERNS = (
     r"bubble[-\s]?fans?",
     r"bubble[-\s]?machine",
     r"dollar[-\s]?spot",
+    # 食品/糖果合集（"XXX Fans" 受众 + 食品商品）等非风扇语境。
+    # 注意：不要加 candy/chocolate/cookie 等可能是风扇颜色描述的词，避免误伤。
+    r"\bpeeps\b",
+    r"\bcupcakes?\b",
+    r"\bhostess\b",
+    r"\btwinkies?\b",
+    r"\bmarshmallows?\b",
+    r"\bgummies?\b",
+    r"ice[-\s]?cream",
+    r"\bpopsicles?\b",
 )
 
 
