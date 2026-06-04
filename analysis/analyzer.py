@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from scrapers.slickdeals_scraper import is_relevant_to_category
 from utils.db import get_repository
 from utils.dingtalk import get_dingtalk_client
 from utils.llm_client import get_llm_client
@@ -200,6 +201,22 @@ def summarize_offsite_deals(
     max_reasonable_price: float,
     min_offsite_price: float = 5,
 ) -> dict[str, Any]:
+    # 类目相关性复核：对已入库数据再跑一次过滤，剔除抓取时规则尚未覆盖的历史噪音。
+    relevant_deals = []
+    dropped_irrelevant = 0
+    for deal in deals:
+        if is_relevant_to_category(
+            deal.get("title") or "",
+            deal.get("url") or "",
+            deal.get("category") or "",
+        ):
+            relevant_deals.append(deal)
+        else:
+            dropped_irrelevant += 1
+    if dropped_irrelevant:
+        logger.info("Offsite relevance re-check: dropped %s irrelevant deal(s)", dropped_irrelevant)
+    deals = relevant_deals
+
     # 价格下限：丢弃明显过低（疑似噪音/非竞品）的 Deal；价格缺失的不丢。
     filtered_deals = []
     dropped_low = 0

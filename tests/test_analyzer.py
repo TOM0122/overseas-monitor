@@ -247,3 +247,31 @@ def test_offsite_price_floor_default_is_five():
     out = summarize_offsite_deals(deals, tz, 20, ["Gaiatop"], 200.0)
     ids = {deal["deal_id"] for deal in out["top_deals"]}
     assert ids == {"y"}
+
+
+def test_offsite_relevance_recheck_drops_stored_noise():
+    tz = ZoneInfo("Asia/Shanghai")
+    deals = [
+        {
+            "deal_id": "dunk",
+            "source": "hip2save",
+            "title": "Dunkin' Fans Can Score a FREE Donut on 6/5",
+            "url": "https://hip2save.com/deals/dunkin-free-donut/",
+            "brand": None,
+            "category": "fan",
+            "price": 6.0,
+        },
+        {
+            "deal_id": "real",
+            "source": "slickdeals",
+            "title": "Gaiatop Portable Handheld Fan",
+            "url": "https://slickdeals.net/f/1-x",
+            "brand": "Gaiatop",
+            "category": "fan",
+            "price": 9.99,
+        },
+    ]
+    out = summarize_offsite_deals(deals, tz, 20, ["Gaiatop"], 200.0)
+    ids = {deal["deal_id"] for deal in out["top_deals"]}
+    assert "dunk" not in ids
+    assert ids == {"real"}
