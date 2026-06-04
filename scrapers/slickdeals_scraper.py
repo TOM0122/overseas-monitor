@@ -675,13 +675,55 @@ _FAN_HARD_EXCLUDE_PATTERNS = (
 )
 
 
+# 非个人/手持风扇类型（家用大风扇、合集），命中即排除。
+_FAN_NON_PERSONAL_TYPE_PATTERNS = (
+    r"ceiling[-\s]?fans?",
+    r"tower[-\s]?fans?",
+    r"pedestal[-\s]?fans?",
+    r"box[-\s]?fans?",
+    r"stand(?:ing)?[-\s]?fans?",
+    r"window[-\s]?fans?",
+    r"exhaust[-\s]?fans?",
+    r"attic[-\s]?fans?",
+    r"whole[-\s]?house[-\s]?fans?",
+    r"wall[-\s]?mount(?:ed)?[-\s]?fans?",
+)
+
+# 个人/手持风扇产品修饰词：出现在 fan 附近 -> 判定为真实风扇产品（用于救「复数 Fans 的产品合集」）。
+_FAN_PRODUCT_MODIFIERS = (
+    "portable", "handheld", "hand-held", "hand held", "mini", "neck",
+    "usb", "rechargeable", "battery", "bladeless", "clip", "clip-on",
+    "personal", "waist", "pocket", "desk",
+)
+_FAN_PRODUCT_PATTERN = re.compile(
+    r"(?:" + "|".join(re.escape(modifier) for modifier in _FAN_PRODUCT_MODIFIERS) + r")"
+    r"[\w\s\-/(),.]{0,25}?\bfans?\b"
+    r"|\bfans?\b[\w\s\-/(),.]{0,25}?(?:"
+    + "|".join(re.escape(modifier) for modifier in _FAN_PRODUCT_MODIFIERS) + r")"
+)
+
+# 受众/粉丝语境（仅针对复数 fans，避免误伤单数产品「Fan,」与品牌所有格）。
+_FAN_AUDIENCE_PATTERNS = (
+    r"\bfans\s*[:,]",  # "Peeps Fans," / "Fans:"
+    r"\bfans\s+(?:can|will|get|got|rejoice|unite|everywhere|listen|score|love|want|rally)\b",
+)
+
+
 def is_relevant_to_category(title: str, url: str, category: str) -> bool:
     text = f"{title} {urlparse(url).path}".lower()
     if category == "fan":
-        # 先硬排除玩具/一元区合集等非产品语境。
+        # 1) 硬排除：玩具/一元区/食品（现有）+ 家用大风扇类型。
         if any(re.search(pattern, text) for pattern in _FAN_HARD_EXCLUDE_PATTERNS):
             return False
-        # 再剔除非产品用法，要求仍存在真正的 fan 词。
+        if any(re.search(pattern, text) for pattern in _FAN_NON_PERSONAL_TYPE_PATTERNS):
+            return False
+        # 2) 明确的个人/手持风扇产品信号 -> 相关（救「Portable Fans $4.99」这类复数产品）。
+        if _FAN_PRODUCT_PATTERN.search(text):
+            return True
+        # 3) 复数 fans 的受众/粉丝语境（无产品信号）-> 排除。
+        if any(re.search(pattern, text) for pattern in _FAN_AUDIENCE_PATTERNS):
+            return False
+        # 4) 兜底：剥离已知非产品用法后仍有 fan(s) -> 相关（品牌所有格/单数 fan 在此保留，不误伤）。
         stripped = text
         for pattern in _FAN_NON_PRODUCT_PATTERNS:
             stripped = re.sub(pattern, " ", stripped)

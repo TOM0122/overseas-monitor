@@ -337,7 +337,7 @@ BESTSELLER_RANK_UP_THRESHOLD=10
 
 日报推送前会自动归一化钉钉 Markdown 排版，并按 `DINGTALK_MARKDOWN_MAX_BYTES` 做 UTF-8 字节截断保护；内容过长时只截断消息，不会因为超长导致整条推送失败。
 Slickdeals / hip2save 请求带指数退避重试，403 / 429 / 5xx 与网络异常都会重试，并在每次重试轮换请求头；Keepa 调用带 wall-clock 超时，避免 `wait=True` 卡死。
-站外报告会丢弃价格低于 `ANALYSIS_MIN_OFFSITE_PRICE`（默认 $5）的 Deal，并对 fan 类目排除玩具/一元区/食品合集语境（如 bullseye、playground、blaster、bubble fan、peeps、cupcake、hostess）。
+站外报告会丢弃价格低于 `ANALYSIS_MIN_OFFSITE_PRICE`（默认 $5）的 Deal，并对 fan 类目排除玩具/一元区/食品合集语境（如 bullseye、playground、blaster、bubble fan、peeps、cupcake、hostess）、粉丝/受众语境（如 Dunkin' Fans 等促销贴）与家用大风扇（ceiling/tower/pedestal/box 等）。
 
 只拉取 Supabase 数据并打印整理后的报告输入，不调用 LLM、不推送：
 

@@ -63,6 +63,36 @@ def test_fan_category_excludes_food_roundup():
     )
 
 
+def test_fan_category_audience_and_type_filtering():
+    fan_url = "https://slickdeals.net/f/1-x"
+    negatives = [
+        "Dunkin' Fans Can Score a FREE Donut on 6/5",
+        "Marvel Fans Will Love This LEGO Set",
+        "Starbucks Fans Rejoice: New Cups Are Here",
+        "Manchester United Soccer Fans Gift Set",
+        "Peeps Fans, Get Ready: Hostess Peeps Cupcakes",
+        "Home Depot Deals: Up to 50% Off Ceiling Fans, Lighting & More",
+        'Lasko 18" Oscillating Pedestal Fan',
+        "Honeywell QuietSet Tower Fan",
+        'Lasko 20" Box Fan (3-Speed)',
+    ]
+    for title in negatives:
+        assert s.is_relevant_to_category(title, fan_url, "fan") is False, title
+
+    positives = [
+        "Gaiatop 4000mAh Rechargeable Handheld Personal Fan",
+        "Diveblues Portable Handheld Fan (Black)",
+        "Handheld Mini Fan (Candy Pink)",
+        "Rechargeable Portable Fans Only $4.99",
+        "Portable Neck Fan, USB Rechargeable",
+        "USB Mini Desk Fan for Office",
+        "Diveblues's Fan Now on Sale",
+        "Aecooly's Fan $9.99",
+    ]
+    for title in positives:
+        assert s.is_relevant_to_category(title, fan_url, "fan") is True, title
+
+
 def test_hip2save_price_from_title():
     assert h.price_from_title("Gaiatop Fan $7.19 (Reg. $14)") == 7.19
 
