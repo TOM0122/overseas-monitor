@@ -38,6 +38,7 @@ def run(
     category_label = os.getenv("ANALYSIS_OFFSITE_CATEGORY_LABEL", "手持风扇")
     focus_brand = os.getenv("ANALYSIS_FOCUS_BRAND", "Diveblues")
     max_price = float(os.getenv("ANALYSIS_MAX_REASONABLE_PRICE", "200"))
+    min_offsite_price = float(os.getenv("ANALYSIS_MIN_OFFSITE_PRICE", "3"))
     bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", "3303867011")
     bsr_category_name = os.getenv("KEEPA_BSR_CATEGORY_NAME", "Best Sellers in Personal Fans")
     rank_up_threshold = int(os.getenv("BESTSELLER_RANK_UP_THRESHOLD", "10"))
@@ -77,6 +78,7 @@ def run(
         top_deals_limit=top_deals_limit,
         monitored_brands=monitored_brands,
         max_reasonable_price=max_price,
+        min_offsite_price=min_offsite_price,
         bsr_category_id=bsr_category_id,
         bsr_category_name=bsr_category_name,
         bestsellers_today=bestsellers_today,
@@ -119,6 +121,7 @@ def build_report_payload(
     top_deals_limit: int,
     monitored_brands: list[str],
     max_reasonable_price: float = 200,
+    min_offsite_price: float = 3,
     bsr_category_id: str = "3303867011",
     bsr_category_name: str = "Best Sellers in Personal Fans",
     bestsellers_today: list[dict[str, Any]] | None = None,
@@ -175,6 +178,7 @@ def build_report_payload(
             top_deals_limit,
             monitored_brands,
             max_reasonable_price,
+            min_offsite_price,
         ),
     }
 
@@ -194,7 +198,21 @@ def summarize_offsite_deals(
     limit: int,
     monitored_brands: list[str],
     max_reasonable_price: float,
+    min_offsite_price: float = 3,
 ) -> dict[str, Any]:
+    # 价格下限：丢弃明显过低（疑似噪音/非竞品）的 Deal；价格缺失的不丢。
+    filtered_deals = []
+    dropped_low = 0
+    for deal in deals:
+        price = to_float_or_none(deal.get("price"))
+        if price is not None and price < min_offsite_price:
+            dropped_low += 1
+            continue
+        filtered_deals.append(deal)
+    if dropped_low:
+        logger.info("Offsite price floor: dropped %s deal(s) below $%.2f", dropped_low, min_offsite_price)
+    deals = filtered_deals
+
     category_counts: dict[str, int] = defaultdict(int)
     brand_counts: dict[str, int] = defaultdict(int)
     source_counts: dict[str, int] = defaultdict(int)

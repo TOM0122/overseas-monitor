@@ -25,6 +25,25 @@ def test_is_relevant_to_category():
     assert s.is_relevant_to_category("Manchester United Soccer Fans Gift", url, "fan") is False
 
 
+def test_fan_category_excludes_toy_roundup():
+    assert (
+        s.is_relevant_to_category(
+            "Target Bullseye Playground Finds: Bubble Fans, Blasters & More",
+            "https://hip2save.com/deals/target-bullseyes-playground-kids/",
+            "fan",
+        )
+        is False
+    )
+    assert (
+        s.is_relevant_to_category(
+            "Gaiatop Portable Handheld Fan",
+            "https://slickdeals.net/f/1-x",
+            "fan",
+        )
+        is True
+    )
+
+
 def test_hip2save_price_from_title():
     assert h.price_from_title("Gaiatop Fan $7.19 (Reg. $14)") == 7.19
 

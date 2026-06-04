@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from zoneinfo import ZoneInfo
 
-from analysis.analyzer import build_report_payload
+from analysis.analyzer import build_report_payload, summarize_offsite_deals
 
 
 def test_bsr_monitor_prefers_bestseller_rank_over_snapshot_bsr():
@@ -180,3 +180,45 @@ def test_bsr_monitor_sorted_by_current_rank():
 
     ranks = [item.get("current_rank") for item in payload["bsr_monitor"]["competitors"]]
     assert ranks == [1, 37, 51, None]
+
+
+def test_offsite_price_floor_drops_cheap_deals():
+    tz = ZoneInfo("Asia/Shanghai")
+    deals = [
+        {
+            "deal_id": "a",
+            "source": "hip2save",
+            "title": "Target Bubble toy (from $1)",
+            "brand": None,
+            "category": "fan",
+            "price": 1.0,
+        },
+        {
+            "deal_id": "b",
+            "source": "slickdeals",
+            "title": "Gaiatop Fan",
+            "brand": "Gaiatop",
+            "category": "fan",
+            "price": 7.99,
+        },
+        {
+            "deal_id": "c",
+            "source": "slickdeals",
+            "title": "NoPrice Fan",
+            "brand": "Gaiatop",
+            "category": "fan",
+            "price": None,
+        },
+    ]
+    out = summarize_offsite_deals(
+        deals,
+        tz,
+        20,
+        ["Gaiatop"],
+        200.0,
+        min_offsite_price=3.0,
+    )
+    ids = {deal["deal_id"] for deal in out["top_deals"]}
+    assert "a" not in ids
+    assert ids == {"b", "c"}
+    assert out["price_range"]["min"] == 7.99

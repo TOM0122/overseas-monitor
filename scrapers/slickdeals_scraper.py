@@ -654,10 +654,24 @@ _FAN_NON_PRODUCT_PATTERNS = (
 )
 
 
+# 玩具 / 一元区合集等明显非「个人手持风扇」的语境，命中即判定不相关。
+_FAN_HARD_EXCLUDE_PATTERNS = (
+    r"\bbullseye\b",
+    r"\bplayground\b",
+    r"\bblasters?\b",
+    r"bubble[-\s]?fans?",
+    r"bubble[-\s]?machine",
+    r"dollar[-\s]?spot",
+)
+
+
 def is_relevant_to_category(title: str, url: str, category: str) -> bool:
     text = f"{title} {urlparse(url).path}".lower()
     if category == "fan":
-        # 先剔除非产品用法，再要求仍存在真正的 fan 词。
+        # 先硬排除玩具/一元区合集等非产品语境。
+        if any(re.search(pattern, text) for pattern in _FAN_HARD_EXCLUDE_PATTERNS):
+            return False
+        # 再剔除非产品用法，要求仍存在真正的 fan 词。
         stripped = text
         for pattern in _FAN_NON_PRODUCT_PATTERNS:
             stripped = re.sub(pattern, " ", stripped)
