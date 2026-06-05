@@ -16,6 +16,8 @@ from scrapers.keepa_fetcher import (
     DEFAULT_BSR_CATEGORY_ID,
     DEFAULT_BSR_CATEGORY_NAME,
     clean_text,
+    first_number,
+    latest_series_value,
     load_asin_configs,
     run_with_timeout,
 )
@@ -43,6 +45,8 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
     variations = parse_bool(os.getenv("KEEPA_BESTSELLER_VARIATIONS", "false"))
     enrich_brands = parse_bool(os.getenv("KEEPA_BESTSELLER_ENRICH", "true"))
     enrich_limit = int(os.getenv("KEEPA_BESTSELLER_ENRICH_LIMIT", str(requested_limit)))
+    enrich_prices = parse_bool(os.getenv("KEEPA_BESTSELLER_PRICE_ENRICH", "true"))
+    price_limit = int(os.getenv("KEEPA_BESTSELLER_PRICE_LIMIT", "30"))
     request_delay_seconds = float(os.getenv("KEEPA_REQUEST_DELAY_SECONDS", "3"))
     keepa_timeout_seconds = float(os.getenv("KEEPA_QUERY_TIMEOUT_SECONDS", "180"))
 
@@ -68,12 +72,14 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
     )
 
     ranked_asins = [asin.upper() for asin in asin_list[:requested_limit]]
-    metadata = fetch_bestseller_metadata(
+    metadata = fetch_bestseller_enrichment(
         api,
         ranked_asins,
         domain=domain,
-        enabled=enrich_brands,
-        limit=enrich_limit,
+        enrich_brands=enrich_brands,
+        brand_limit=enrich_limit,
+        enrich_prices=enrich_prices,
+        price_limit=price_limit,
         timeout_seconds=keepa_timeout_seconds,
     )
 
@@ -89,6 +95,9 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
             "is_tracked": asin in tracked_asins,
             "brand": metadata.get(asin, {}).get("brand"),
             "title": metadata.get(asin, {}).get("title"),
+            "price": metadata.get(asin, {}).get("price"),
+            "buy_box_price": metadata.get(asin, {}).get("buy_box_price"),
+            "price_source": metadata.get(asin, {}).get("price_source"),
             "snapshot_date": snapshot_date,
             "snapshot_at": snapshot_at.isoformat(),
         }
@@ -105,46 +114,87 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
     return rows
 
 
-def fetch_bestseller_metadata(
+def fetch_bestseller_enrichment(
     api: "keepa.Keepa",
     asins: list[str],
     *,
     domain: str,
-    enabled: bool,
-    limit: int,
+    enrich_brands: bool,
+    brand_limit: int,
+    enrich_prices: bool,
+    price_limit: int,
     timeout_seconds: float = 180.0,
-) -> dict[str, dict[str, str | None]]:
-    """批量获取榜单 ASIN 的 brand/title。尽力而为：失败返回空 dict。"""
-    if not enabled or not asins or limit <= 0:
+) -> dict[str, dict[str, Any]]:
+    """批量获取榜单 ASIN 的 brand/title 与 Top30 价格。尽力而为：失败返回空 dict。"""
+    target_count = max(brand_limit if enrich_brands else 0, price_limit if enrich_prices else 0)
+    if not asins or target_count <= 0:
         return {}
-    targets = asins[:limit]
+    targets = asins[:target_count]
     try:
         products = run_with_timeout(
             api.query,
             timeout_seconds,
             targets,
             domain=domain,
+            stats=1,
             history=False,
             rating=False,
-            buybox=False,
+            buybox=enrich_prices,
             wait=True,
             progress_bar=False,
         )
     except Exception as exc:
-        logger.warning("Bestseller brand enrichment failed: %s", exc)
+        logger.warning("Bestseller enrichment failed: %s", exc)
         return {}
 
-    metadata: dict[str, dict[str, str | None]] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    brand_targets = set(asins[:brand_limit]) if enrich_brands else set()
+    price_targets = set(asins[:price_limit]) if enrich_prices else set()
     for product in products or []:
         asin = str(product.get("asin") or "").upper()
         if not asin:
             continue
-        metadata[asin] = {
-            "brand": clean_text(product.get("brand")),
-            "title": clean_text(product.get("title")),
-        }
-    logger.info("Enriched %s/%s best-seller ASINs with brand/title", len(metadata), len(targets))
+        item: dict[str, Any] = {}
+        if asin in brand_targets:
+            item["brand"] = clean_text(product.get("brand"))
+            item["title"] = clean_text(product.get("title"))
+        if asin in price_targets:
+            price_item = extract_bestseller_price(product)
+            item.update(price_item)
+        metadata[asin] = item
+    logger.info(
+        "Enriched %s/%s best-seller ASINs with metadata price_limit=%s brand_limit=%s",
+        len(metadata),
+        len(targets),
+        price_limit if enrich_prices else 0,
+        brand_limit if enrich_brands else 0,
+    )
     return metadata
+
+
+def extract_bestseller_price(product: dict[str, Any]) -> dict[str, Any]:
+    stats = product.get("stats_parsed") or {}
+    current_stats = stats.get("current") or {}
+    data = product.get("data") or {}
+    buy_box_price = first_number(
+        current_stats.get("BUY_BOX_SHIPPING"),
+        latest_series_value(data, "BUY_BOX_SHIPPING"),
+    )
+    new_price = first_number(
+        current_stats.get("NEW"),
+        latest_series_value(data, "NEW"),
+    )
+    amazon_price = first_number(
+        current_stats.get("AMAZON"),
+        latest_series_value(data, "AMAZON"),
+    )
+    if buy_box_price is not None:
+        return {"price": buy_box_price, "buy_box_price": buy_box_price, "price_source": "buy_box"}
+    if new_price is not None:
+        return {"price": new_price, "buy_box_price": None, "price_source": "new"}
+    if amazon_price is not None:
+        return {"price": amazon_price, "buy_box_price": None, "price_source": "amazon"}
+    return {"price": None, "buy_box_price": None, "price_source": None}
 
 
 def parse_bool(value: str) -> bool:

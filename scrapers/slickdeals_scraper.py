@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
@@ -36,6 +36,21 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
     "(KHTML, like Gecko) Version/17.5 Safari/605.1.15",
 ]
+GENERIC_BRAND_TOKENS = {
+    "amazon",
+    "best",
+    "deal",
+    "deals",
+    "fan",
+    "fans",
+    "handheld",
+    "mini",
+    "portable",
+    "prime",
+    "rechargeable",
+    "select",
+    "usb",
+}
 
 
 @dataclass(frozen=True)
@@ -73,10 +88,23 @@ def run(*, limit: int = 20, dry_run: bool = False, debug_html: bool = False) -> 
 
             if not deals:
                 logger.warning(
-                    "No deals parsed for keyword=%r. TODO: fallback to Playwright when static parsing fails.",
+                    "No deals parsed for keyword=%r by static parser.",
                     keyword_config.keyword,
                 )
-                if debug_html:
+                if playwright_fallback_enabled():
+                    logger.info("Trying Slickdeals Playwright search-page fallback for keyword=%r", keyword_config.keyword)
+                    fallback_html = fetch_search_page_playwright(keyword_config.keyword)
+                    if fallback_html:
+                        if debug_html:
+                            save_debug_html(keyword_config.keyword, fallback_html, "playwright-search")
+                        deals = parse_search_results(
+                            html=fallback_html,
+                            keyword_config=keyword_config,
+                            monitored_brands=monitored_brands,
+                            limit=limit,
+                            max_post_age_days=max_post_age_days,
+                        )
+                if debug_html and not deals:
                     save_debug_html(keyword_config.keyword, html, "no-deals")
 
             all_deals.extend(deals)
@@ -152,6 +180,41 @@ def fetch_search_page(session: requests.Session, keyword: str) -> str:
     }
     response = request_with_retry(session, SEARCH_URL, headers_factory=build_headers, params=params)
     return response.text
+
+
+def playwright_fallback_enabled() -> bool:
+    return os.getenv("SLICKDEALS_PLAYWRIGHT_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def fetch_search_page_playwright(keyword: str) -> str | None:
+    """Optional search-page-only fallback. It never visits individual deal pages."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        logger.warning("SLICKDEALS_PLAYWRIGHT_FALLBACK=true but playwright is not installed")
+        return None
+
+    params = {
+        "q": keyword,
+        "src": "SearchBarV2",
+        "isUserSearch": "1",
+        "hideexpired": "1",
+        "sort": "rating",
+    }
+    url = f"{SEARCH_URL}?{urlencode(params)}"
+    timeout_ms = int(float(os.getenv("SLICKDEALS_PLAYWRIGHT_TIMEOUT_SECONDS", "20")) * 1000)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(user_agent=random.choice(USER_AGENTS), locale="en-US")
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            page.wait_for_timeout(1500)
+            html = page.content()
+            browser.close()
+            return html
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Slickdeals Playwright fallback failed keyword=%r: %s", keyword, exc)
+        return None
 
 
 def warm_up_session(session: requests.Session) -> None:
@@ -736,14 +799,27 @@ def is_relevant_to_category(title: str, url: str, category: str) -> bool:
 
 def infer_brand_from_title(title: str) -> str | None:
     candidate = title
-    candidate = re.sub(r"^(prime members?|select [^:]+ locations?|amazon|walmart|costco):\s*", "", candidate, flags=re.IGNORECASE)
-    candidate = re.sub(r"^\d+\s*[- ]?\s*(pack|pk)\s+", "", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(
+        r"^(prime members?|select [^:]+ locations?|amazon|walmart|costco|target|best buy|woot):\s*",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(r"^\d+\s*[- ]?\s*(pack|pk|count|ct)\s+", "", candidate, flags=re.IGNORECASE)
     candidate = re.sub(r"^[0-9]+(?:\.[0-9]+)?[\"”]?\s+", "", candidate)
-    candidate = re.sub(r"^(new|hot|deal|sale|various|assorted)\s+", "", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(
+        r"^(new|hot|deal|deals|sale|various|assorted|portable|rechargeable|mini|handheld|usb)\s+",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
     match = re.match(r"([A-Z][A-Za-z0-9&'+.-]{1,})", candidate.strip())
     if not match:
         return None
-    return match.group(1)
+    brand = match.group(1)
+    if brand.lower() in GENERIC_BRAND_TOKENS:
+        return None
+    return brand
 
 
 def save_debug_html(keyword: str, html: str, suffix: str) -> Path:

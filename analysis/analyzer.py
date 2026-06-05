@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-from scrapers.slickdeals_scraper import is_relevant_to_category
+from scrapers.slickdeals_scraper import infer_brand_from_title, is_relevant_to_category
 from utils.db import get_repository
 from utils.dingtalk import get_dingtalk_client
 from utils.llm_client import get_llm_client
@@ -22,6 +22,21 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROMPT_PATH = PROJECT_ROOT / "prompts" / "daily_report.md"
 BRAND_LIST_PATH = PROJECT_ROOT / "config" / "brand_list.txt"
+GENERIC_BRAND_CANDIDATES = {
+    "amazon",
+    "best",
+    "deal",
+    "deals",
+    "fan",
+    "fans",
+    "handheld",
+    "mini",
+    "portable",
+    "prime",
+    "rechargeable",
+    "select",
+    "usb",
+}
 
 
 def run(
@@ -43,10 +58,13 @@ def run(
     bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", "3303867011")
     bsr_category_name = os.getenv("KEEPA_BSR_CATEGORY_NAME", "Best Sellers in Personal Fans")
     rank_up_threshold = int(os.getenv("BESTSELLER_RANK_UP_THRESHOLD", "10"))
+    top30_limit = min(int(os.getenv("ANALYSIS_TOP30_PRICE_LIMIT", "30")), 30)
     monitored_brands = load_monitored_brands()
 
     today_start_utc, today_end_utc = local_day_bounds_utc(report_date, tz)
     yesterday_start_utc, _ = local_day_bounds_utc(report_date - timedelta(days=1), tz)
+    week_start_utc, _ = local_day_bounds_utc(report_date - timedelta(days=7), tz)
+    candidate_start_utc, _ = local_day_bounds_utc(report_date - timedelta(days=14), tz)
 
     repository = get_repository()
     slickdeals = repository.fetch_slickdeals_deals_between(
@@ -69,6 +87,17 @@ def run(
         today_start_utc,
         category_id=bsr_category_id,
     )
+    amazon_week_history = repository.fetch_amazon_snapshots_between(week_start_utc, today_start_utc)
+    bestsellers_week_history = repository.fetch_amazon_bestsellers_between(
+        week_start_utc,
+        today_start_utc,
+        category_id=bsr_category_id,
+    )
+    offsite_candidate_history = repository.fetch_slickdeals_deals_between(
+        candidate_start_utc,
+        today_start_utc,
+        category=offsite_category,
+    )
 
     report_payload = build_report_payload(
         report_date=report_date,
@@ -84,9 +113,13 @@ def run(
         bsr_category_name=bsr_category_name,
         bestsellers_today=bestsellers_today,
         bestsellers_yesterday=bestsellers_yesterday,
+        amazon_week_history=amazon_week_history,
+        bestsellers_week_history=bestsellers_week_history,
+        offsite_candidate_history=offsite_candidate_history,
         rank_up_threshold=rank_up_threshold,
         category_label=category_label,
         focus_brand=focus_brand,
+        top30_limit=top30_limit,
     )
 
     if dry_run:
@@ -127,9 +160,13 @@ def build_report_payload(
     bsr_category_name: str = "Best Sellers in Personal Fans",
     bestsellers_today: list[dict[str, Any]] | None = None,
     bestsellers_yesterday: list[dict[str, Any]] | None = None,
+    amazon_week_history: list[dict[str, Any]] | None = None,
+    bestsellers_week_history: list[dict[str, Any]] | None = None,
+    offsite_candidate_history: list[dict[str, Any]] | None = None,
     rank_up_threshold: int = 10,
     category_label: str = "手持风扇",
     focus_brand: str = "Diveblues",
+    top30_limit: int = 30,
 ) -> dict[str, Any]:
     bsr_today = filter_bsr_snapshots(amazon_today, bsr_category_id)
     bsr_yesterday = filter_bsr_snapshots(amazon_yesterday, bsr_category_id)
@@ -168,10 +205,28 @@ def build_report_payload(
             bestsellers_yesterday or [],
             focus_brand,
         ),
+        "amazon_top30_price_monitor": summarize_top30_price_monitor(
+            bestsellers_today or [],
+            bestsellers_yesterday or [],
+            limit=min(top30_limit, 30),
+        ),
         "bestseller_monitor": summarize_bestseller_rankings(
             bestsellers_today or [],
             bestsellers_yesterday or [],
             rank_up_threshold=rank_up_threshold,
+        ),
+        "trends": summarize_trends(
+            amazon_today=amazon_today,
+            amazon_week_history=amazon_week_history or [],
+            bestsellers_today=bestsellers_today or [],
+            bestsellers_week_history=bestsellers_week_history or [],
+            bsr_category_id=bsr_category_id,
+            focus_brand=focus_brand,
+        ),
+        "competitor_candidates": summarize_competitor_candidates(
+            offsite_rows=[*(offsite_candidate_history or []), *slickdeals],
+            bestsellers_rows=[*(bestsellers_week_history or []), *(bestsellers_today or [])],
+            monitored_brands=monitored_brands,
         ),
         "offsite": summarize_offsite_deals(
             slickdeals,
@@ -496,6 +551,40 @@ def summarize_bsr(items: list[dict[str, Any]], focus_brand: str) -> dict[str, An
     return {"focus": focus, "competitors": competitors}
 
 
+def summarize_top30_price_monitor(
+    today_rows: list[dict[str, Any]],
+    yesterday_rows: list[dict[str, Any]],
+    *,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    today_latest = latest_bestseller_by_asin(today_rows)
+    yesterday_latest = latest_bestseller_by_asin(yesterday_rows)
+    top_today = sorted(today_latest.values(), key=lambda row: to_int_or_none(row.get("rank")) or 999999)
+    rows = []
+    for row in top_today[: min(limit, 30)]:
+        asin = normalize_asin(row.get("asin"))
+        previous = yesterday_latest.get(asin)
+        current_price = to_float_or_none(row.get("price"))
+        previous_price = to_float_or_none(previous.get("price")) if previous else None
+        price_change = diff(current_price, previous_price)
+        rows.append(
+            {
+                "rank": to_int_or_none(row.get("rank")),
+                "brand": row.get("brand") or "unknown",
+                "asin": row.get("asin"),
+                "price": current_price,
+                "buy_box_price": to_float_or_none(row.get("buy_box_price")),
+                "price_source": row.get("price_source"),
+                "yesterday_price": previous_price,
+                "price_change": price_change,
+                "price_change_display": format_price_change(price_change),
+                "is_tracked": row.get("is_tracked"),
+                "data_status": "ok" if current_price is not None and previous_price is not None else "数据缺失",
+            }
+        )
+    return rows
+
+
 def summarize_bestseller_rankings(
     today_rows: list[dict[str, Any]],
     yesterday_rows: list[dict[str, Any]],
@@ -570,8 +659,218 @@ def normalize_bestseller_row(row: dict[str, Any]) -> dict[str, Any]:
         "is_tracked": row.get("is_tracked"),
         "brand": row.get("brand"),
         "title": row.get("title"),
+        "price": to_float_or_none(row.get("price")),
+        "buy_box_price": to_float_or_none(row.get("buy_box_price")),
+        "price_source": row.get("price_source"),
         "snapshot_at": row.get("snapshot_at"),
     }
+
+
+def summarize_trends(
+    *,
+    amazon_today: list[dict[str, Any]],
+    amazon_week_history: list[dict[str, Any]],
+    bestsellers_today: list[dict[str, Any]],
+    bestsellers_week_history: list[dict[str, Any]],
+    bsr_category_id: str,
+    focus_brand: str,
+) -> dict[str, Any]:
+    today_snapshots = latest_snapshot_by_asin(filter_bsr_snapshots(amazon_today, bsr_category_id))
+    history_snapshots = earliest_snapshot_by_asin(filter_bsr_snapshots(amazon_week_history, bsr_category_id))
+    focus_key = normalize_brand_key(focus_brand)
+    focus_items = []
+    price_drops = []
+    for asin, today in today_snapshots.items():
+        previous = history_snapshots.get(asin)
+        if not previous:
+            continue
+        item = build_snapshot_trend_item(today, previous)
+        if normalize_brand_key(today.get("brand")) == focus_key:
+            focus_items.append(item)
+        if item.get("price_change") is not None and item["price_change"] < 0:
+            price_drops.append(item)
+
+    today_bestsellers = latest_bestseller_by_asin(bestsellers_today)
+    history_bestsellers = earliest_bestseller_by_asin(bestsellers_week_history)
+    rank_moves = []
+    new_entries = []
+    for asin, today in today_bestsellers.items():
+        previous = history_bestsellers.get(asin)
+        if not previous:
+            new_entries.append(normalize_bestseller_row(today))
+            continue
+        current_rank = to_int_or_none(today.get("rank"))
+        previous_rank = to_int_or_none(previous.get("rank"))
+        change = diff(current_rank, previous_rank)
+        if change is None:
+            continue
+        item = normalize_bestseller_row(today)
+        item["week_start_rank"] = previous_rank
+        item["rank_change"] = change
+        item["rank_change_display"] = format_rank_change(change)
+        rank_moves.append(item)
+
+    price_drops.sort(key=lambda item: item["price_change"])
+    rank_gainers = sorted([item for item in rank_moves if item["rank_change"] < 0], key=lambda item: item["rank_change"])
+    rank_droppers = sorted([item for item in rank_moves if item["rank_change"] > 0], key=lambda item: item["rank_change"], reverse=True)
+    new_entries.sort(key=lambda item: item.get("rank") or 999999)
+
+    return {
+        "focus_weekly": focus_items[:3],
+        "price_drops": price_drops[:3],
+        "rank_gainers": rank_gainers[:3],
+        "rank_droppers": rank_droppers[:3],
+        "new_entries": new_entries[:3],
+    }
+
+
+def build_snapshot_trend_item(today: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any]:
+    price_change = diff(today.get("price"), previous.get("price"))
+    bsr_change = diff(today.get("bsr"), previous.get("bsr"))
+    return {
+        "asin": today.get("asin"),
+        "brand": today.get("brand"),
+        "current_price": to_float_or_none(today.get("price")),
+        "week_start_price": to_float_or_none(previous.get("price")),
+        "price_change": price_change,
+        "price_change_display": format_price_change(price_change),
+        "current_bsr": to_int_or_none(today.get("bsr")),
+        "week_start_bsr": to_int_or_none(previous.get("bsr")),
+        "bsr_change": bsr_change,
+        "bsr_change_display": format_rank_change(bsr_change),
+    }
+
+
+def summarize_competitor_candidates(
+    *,
+    offsite_rows: list[dict[str, Any]],
+    bestsellers_rows: list[dict[str, Any]],
+    monitored_brands: list[str],
+) -> list[dict[str, Any]]:
+    monitored = {normalize_brand_key(brand) for brand in monitored_brands}
+    buckets: dict[str, dict[str, Any]] = {}
+
+    for row in offsite_rows:
+        if not is_relevant_to_category(row.get("title") or "", row.get("url") or "", row.get("category") or ""):
+            continue
+        raw_brand = row.get("brand")
+        brand = clean_candidate_brand(raw_brand)
+        if not brand:
+            brand = clean_candidate_brand(infer_brand_from_title(row.get("title") or ""))
+        if not brand or normalize_brand_key(brand) in monitored:
+            continue
+        bucket = candidate_bucket(buckets, brand)
+        bucket["offsite_count"] += 1
+        bucket["sources"].add(row.get("source") or "slickdeals")
+        day = parse_datetime(row.get("scraped_at"))
+        if day:
+            bucket["seen_days"].add(day.date().isoformat())
+        bucket["heat_score"] += (to_int_or_none(row.get("thumbs_up")) or 0)
+        bucket["heat_score"] += (to_int_or_none(row.get("comments_count")) or 0) * 2
+        if row.get("is_frontpage") is True:
+            bucket["heat_score"] += 50
+        bucket["sample_title"] = bucket["sample_title"] or row.get("title")
+
+    for row in bestsellers_rows:
+        if row.get("is_tracked") is True:
+            continue
+        brand = clean_candidate_brand(row.get("brand"))
+        if not brand or normalize_brand_key(brand) in monitored:
+            continue
+        bucket = candidate_bucket(buckets, brand)
+        bucket["amazon_count"] += 1
+        rank = to_int_or_none(row.get("rank"))
+        if rank:
+            bucket["best_rank"] = min_optional(bucket["best_rank"], rank)
+            if rank <= 30:
+                bucket["in_top30"] = True
+                bucket["heat_score"] += 30
+            bucket["heat_score"] += max(0, 101 - rank)
+        day = parse_datetime(row.get("snapshot_at"))
+        if day:
+            bucket["seen_days"].add(day.date().isoformat())
+        bucket["sample_asin"] = bucket["sample_asin"] or row.get("asin")
+
+    candidates = []
+    for bucket in buckets.values():
+        candidates.append(
+            {
+                "brand": bucket["brand"],
+                "seen_days": len(bucket["seen_days"]),
+                "source_count": len(bucket["sources"]) + (1 if bucket["amazon_count"] else 0),
+                "offsite_count": bucket["offsite_count"],
+                "amazon_count": bucket["amazon_count"],
+                "heat_score": bucket["heat_score"],
+                "best_rank": to_int_or_none(bucket["best_rank"]),
+                "in_top30": bucket["in_top30"],
+                "sample_title": bucket["sample_title"],
+                "sample_asin": bucket["sample_asin"],
+            }
+        )
+    candidates.sort(
+        key=lambda item: (
+            item["seen_days"],
+            item["source_count"],
+            item["in_top30"],
+            item["heat_score"],
+        ),
+        reverse=True,
+    )
+    return candidates[:5]
+
+
+def candidate_bucket(buckets: dict[str, dict[str, Any]], brand: str) -> dict[str, Any]:
+    key = normalize_brand_key(brand)
+    return buckets.setdefault(
+        key,
+        {
+            "brand": brand,
+            "seen_days": set(),
+            "sources": set(),
+            "offsite_count": 0,
+            "amazon_count": 0,
+            "heat_score": 0,
+            "best_rank": None,
+            "in_top30": False,
+            "sample_title": None,
+            "sample_asin": None,
+        },
+    )
+
+
+def clean_candidate_brand(value: Any) -> str | None:
+    brand = str(value or "").strip()
+    if not brand or brand.lower() == "unknown":
+        return None
+    if normalize_brand_key(brand) in GENERIC_BRAND_CANDIDATES:
+        return None
+    return brand
+
+
+def earliest_snapshot_by_asin(snapshots: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    earliest: dict[str, dict[str, Any]] = {}
+    for snapshot in snapshots:
+        asin = normalize_asin(snapshot.get("asin"))
+        if not asin:
+            continue
+        current_time = parse_datetime(snapshot.get("snapshot_at")) or datetime.max.replace(tzinfo=timezone.utc)
+        previous_time = parse_datetime(earliest.get(asin, {}).get("snapshot_at")) if asin in earliest else None
+        if previous_time is None or current_time < previous_time:
+            earliest[asin] = snapshot
+    return earliest
+
+
+def earliest_bestseller_by_asin(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    earliest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        asin = normalize_asin(row.get("asin"))
+        if not asin:
+            continue
+        current_time = parse_datetime(row.get("snapshot_at")) or datetime.max.replace(tzinfo=timezone.utc)
+        previous_time = parse_datetime(earliest.get(asin, {}).get("snapshot_at")) if asin in earliest else None
+        if previous_time is None or current_time < previous_time:
+            earliest[asin] = row
+    return earliest
 
 
 def render_prompt(report_payload: dict[str, Any]) -> str:
@@ -644,6 +943,15 @@ def format_rank_change(change_abs: Any) -> str:
     else:
         change_text = f"{change:+g}"
     return f"{change_text} 名"
+
+
+def format_price_change(change_abs: Any) -> str:
+    change = to_float_or_none(change_abs)
+    if change is None:
+        return "数据缺失"
+    if change == 0:
+        return "持平"
+    return f"{change:+.2f}"
 
 
 def pct_change(current: Any, previous: Any) -> float | None:

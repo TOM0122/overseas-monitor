@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import scrapers.hip2save_scraper as h
+import scrapers.amazon_bestseller_scraper as b
 import scrapers.keepa_fetcher as k
 import scrapers.slickdeals_scraper as s
 from utils.validation import sanitize_rows
@@ -139,6 +140,30 @@ def test_keepa_clean_text():
     assert k.clean_text("  hi ") == "hi"
     assert k.clean_text(None) is None
     assert k.clean_text("") is None
+
+
+def test_slickdeals_infer_brand_rejects_generic_openers():
+    assert s.infer_brand_from_title("Portable Handheld Fan $9.99") is None
+    assert s.infer_brand_from_title("2-Pack Koonie Portable Fan") == "Koonie"
+    assert s.infer_brand_from_title("Prime Members: Gaiatop Fan") == "Gaiatop"
+
+
+def test_bestseller_price_prefers_buy_box():
+    product = {
+        "stats_parsed": {
+            "current": {
+                "BUY_BOX_SHIPPING": 8.99,
+                "NEW": 9.99,
+                "AMAZON": 10.99,
+            }
+        },
+        "data": {},
+    }
+    assert b.extract_bestseller_price(product) == {
+        "price": 8.99,
+        "buy_box_price": 8.99,
+        "price_source": "buy_box",
+    }
 
 
 def test_sanitize_rows_drops_and_nulls():

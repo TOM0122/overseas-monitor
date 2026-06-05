@@ -120,6 +120,9 @@ create table amazon_bestsellers (
   is_tracked boolean default false,
   brand text,
   title text,
+  price numeric,
+  buy_box_price numeric,
+  price_source text,
   snapshot_date date not null,
   snapshot_at timestamptz default now(),
   unique(category_id, asin, snapshot_date)
@@ -171,6 +174,11 @@ alter table public.amazon_bestsellers
     add column if not exists brand text,
     add column if not exists title text;
 
+alter table public.amazon_bestsellers
+    add column if not exists price numeric,
+    add column if not exists buy_box_price numeric,
+    add column if not exists price_source text;
+
 create index if not exists idx_amazon_bestsellers_category_snapshot_rank
 on amazon_bestsellers(category_id, snapshot_at, rank);
 
@@ -179,6 +187,13 @@ on amazon_bestsellers(asin, snapshot_at);
 ```
 
 同样的 SQL 已拆分保存在 `sql/` 目录下。TODO：后续如确认多站点模型稳定，可考虑把表名从 `slickdeals_deals` 重命名为 `offsite_deals`。
+
+应用 `sql/006_add_prices_to_amazon_bestsellers.sql` 后，本地验证命令：
+
+```bash
+.venv/bin/python -m scrapers.amazon_bestseller_scraper --limit 30 --dry-run
+.venv/bin/python -m analysis.analyzer --dry-run
+```
 
 ## 配置文件格式
 
@@ -269,10 +284,13 @@ KEEPA_BESTSELLER_SUBLIST=true
 KEEPA_BESTSELLER_VARIATIONS=false
 KEEPA_BESTSELLER_ENRICH=true
 KEEPA_BESTSELLER_ENRICH_LIMIT=100
+KEEPA_BESTSELLER_PRICE_ENRICH=true
+KEEPA_BESTSELLER_PRICE_LIMIT=30
 ```
 
 `KEEPA_FETCH_BUYBOX=true` 会额外消耗 Keepa token，但可以得到 `buy_box_price`。如果 token 紧张，可以临时改成 `false`，此时 `buy_box_price` 可能为空。
 `KEEPA_BESTSELLER_ENRICH=true` 会为类目榜单 ASIN 额外补充 `brand/title`，每个 ASIN 约消耗 1 个 Keepa token；token 紧张时可调小 `KEEPA_BESTSELLER_ENRICH_LIMIT` 或设为 `false`。
+`KEEPA_BESTSELLER_PRICE_ENRICH=true` 会为类目前 30 名额外补充价格字段；默认 `KEEPA_BESTSELLER_PRICE_LIMIT=30`，不要扩大到 Top100，避免 Keepa token 失控。
 `KEEPA_QUERY_TIMEOUT_SECONDS` 会给单次 Keepa 调用加 wall-clock 超时，避免 `wait=True` 因 token 或网络问题卡住整条 Pipeline。
 
 验证 ASIN 拉取，不写数据库：
@@ -323,6 +341,7 @@ DINGTALK_MARKDOWN_MAX_BYTES=19000
 TIMEZONE=Asia/Shanghai
 SCRAPER_MAX_RETRIES=3
 SCRAPER_BACKOFF_SECONDS=3
+DATA_QUALITY_DROP_RATIO=0.4
 KEEPA_QUERY_TIMEOUT_SECONDS=180
 ANALYSIS_TOP_DEALS_LIMIT=20
 ANALYSIS_OFFSITE_CATEGORY=fan
@@ -333,6 +352,9 @@ ANALYSIS_MIN_OFFSITE_PRICE=5
 SLICKDEALS_MAX_POST_AGE_DAYS=30
 KEEPA_BSR_CATEGORY_ID=3303867011
 KEEPA_BSR_CATEGORY_NAME=Best Sellers in Personal Fans
+KEEPA_BESTSELLER_PRICE_ENRICH=true
+KEEPA_BESTSELLER_PRICE_LIMIT=30
+ANALYSIS_TOP30_PRICE_LIMIT=30
 BESTSELLER_RANK_UP_THRESHOLD=10
 ```
 
@@ -351,6 +373,8 @@ python -m analysis.analyzer --dry-run
 ```bash
 python -m analysis.analyzer --no-push
 ```
+
+上线或调整新增日报模块后，必须用 `--no-push` 实测整份报告 UTF-8 字节数低于 `DINGTALK_MARKDOWN_MAX_BYTES`（默认 19000）。亚马逊 Top30 价格监控表硬上限为 30 行，且不输出标题列；上线首日因昨日历史行没有价格字段，「较昨日」会显示「数据缺失」，不要用 0 代替。Top30 上线后，BSR 模块只渲染自有/重点品牌排名，竞品 BSR 表不再输出。
 
 正式生成并推送钉钉：
 
@@ -414,6 +438,8 @@ KEEPA_BESTSELLER_SUBLIST
 KEEPA_BESTSELLER_VARIATIONS
 KEEPA_BESTSELLER_ENRICH
 KEEPA_BESTSELLER_ENRICH_LIMIT
+KEEPA_BESTSELLER_PRICE_ENRICH
+KEEPA_BESTSELLER_PRICE_LIMIT
 LLM_BASE_URL
 LLM_API_KEY
 LLM_MODEL
@@ -426,7 +452,9 @@ LOG_LEVEL
 TIMEZONE
 SCRAPER_MAX_RETRIES
 SCRAPER_BACKOFF_SECONDS
+DATA_QUALITY_DROP_RATIO
 ANALYSIS_TOP_DEALS_LIMIT
+ANALYSIS_TOP30_PRICE_LIMIT
 ANALYSIS_OFFSITE_CATEGORY
 ANALYSIS_OFFSITE_CATEGORY_LABEL
 ANALYSIS_FOCUS_BRAND

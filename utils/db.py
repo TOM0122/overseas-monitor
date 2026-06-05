@@ -83,6 +83,7 @@ class SupabaseRepository:
         start_utc: datetime,
         end_utc: datetime,
         category: str | None = None,
+        source: str | None = None,
     ) -> list[dict[str, Any]]:
         query = (
             self.client.table("slickdeals_deals")
@@ -93,6 +94,8 @@ class SupabaseRepository:
         )
         if category:
             query = query.eq("category", category)
+        if source:
+            query = query.eq("source", source)
 
         response = query.execute()
         return response.data or []
@@ -121,6 +124,7 @@ class SupabaseRepository:
         start_utc: datetime,
         end_utc: datetime,
         category_id: str | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         query = (
             self.client.table("amazon_bestsellers")
@@ -131,6 +135,8 @@ class SupabaseRepository:
         )
         if category_id:
             query = query.eq("category_id", category_id)
+        if limit:
+            query = query.limit(limit)
 
         response = query.execute()
         return response.data or []

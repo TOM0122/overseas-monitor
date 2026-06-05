@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from zoneinfo import ZoneInfo
 
-from analysis.analyzer import build_report_payload, summarize_offsite_deals
+from analysis.analyzer import build_report_payload, summarize_competitor_candidates, summarize_offsite_deals
 
 
 def test_bsr_monitor_prefers_bestseller_rank_over_snapshot_bsr():
@@ -299,3 +299,155 @@ def test_offsite_competitor_deal_splits():
     assert {d["brand"] for d in hp} == {"Diveblues"}
     assert out["summary_by_source"]["slickdeals"]["deal_count"] == 2   # 总览含非监控计数
     assert out["summary_by_source"]["slickdeals"]["brand_count"] == 1  # 仅 Gaiatop 非 unknown
+
+
+def test_top30_price_monitor_caps_rows_and_keeps_first_day_missing():
+    today = [
+        {
+            "asin": f"B0{i:08d}",
+            "brand": "Brand",
+            "rank": i,
+            "price": 10 + i,
+            "buy_box_price": 10 + i,
+            "price_source": "buy_box",
+            "snapshot_at": "2026-06-05T00:00:00+00:00",
+        }
+        for i in range(1, 35)
+    ]
+    payload = build_report_payload(
+        report_date=date(2026, 6, 5),
+        tz=ZoneInfo("Asia/Shanghai"),
+        slickdeals=[],
+        amazon_today=[],
+        amazon_yesterday=[],
+        top_deals_limit=20,
+        monitored_brands=["Diveblues"],
+        bestsellers_today=today,
+        bestsellers_yesterday=[
+            {
+                "asin": "B000000001",
+                "brand": "Brand",
+                "rank": 1,
+                "snapshot_at": "2026-06-04T00:00:00+00:00",
+            }
+        ],
+        top30_limit=30,
+    )
+
+    rows = payload["amazon_top30_price_monitor"]
+    assert len(rows) == 30
+    assert rows[0]["rank"] == 1
+    assert rows[0]["price"] == 11.0
+    assert rows[0]["price_change_display"] == "数据缺失"
+
+
+def test_top30_price_monitor_formats_price_change_after_baseline_exists():
+    payload = build_report_payload(
+        report_date=date(2026, 6, 6),
+        tz=ZoneInfo("Asia/Shanghai"),
+        slickdeals=[],
+        amazon_today=[],
+        amazon_yesterday=[],
+        top_deals_limit=20,
+        monitored_brands=["Diveblues"],
+        bestsellers_today=[
+            {
+                "asin": "B0PRICE",
+                "brand": "Brand",
+                "rank": 1,
+                "price": 8.99,
+                "snapshot_at": "2026-06-06T00:00:00+00:00",
+            }
+        ],
+        bestsellers_yesterday=[
+            {
+                "asin": "B0PRICE",
+                "brand": "Brand",
+                "rank": 2,
+                "price": 10.99,
+                "snapshot_at": "2026-06-05T00:00:00+00:00",
+            }
+        ],
+    )
+
+    item = payload["amazon_top30_price_monitor"][0]
+    assert item["price_change"] == -2.0
+    assert item["price_change_display"] == "-2.00"
+
+
+def test_trends_compare_current_to_week_start_same_bsr_category():
+    payload = build_report_payload(
+        report_date=date(2026, 6, 8),
+        tz=ZoneInfo("Asia/Shanghai"),
+        slickdeals=[],
+        amazon_today=[
+            {
+                "asin": "B0FOCUS",
+                "brand": "Diveblues",
+                "price": 12.0,
+                "bsr": 8,
+                "bsr_category_id": "3303867011",
+                "snapshot_at": "2026-06-08T00:00:00+00:00",
+            }
+        ],
+        amazon_yesterday=[],
+        amazon_week_history=[
+            {
+                "asin": "B0FOCUS",
+                "brand": "Diveblues",
+                "price": 15.0,
+                "bsr": 12,
+                "bsr_category_id": "3303867011",
+                "snapshot_at": "2026-06-01T00:00:00+00:00",
+            },
+            {
+                "asin": "B0OTHER",
+                "brand": "Other",
+                "price": 9.0,
+                "bsr": 99,
+                "bsr_category_id": "not-target",
+                "snapshot_at": "2026-06-01T00:00:00+00:00",
+            },
+        ],
+        top_deals_limit=20,
+        monitored_brands=["Diveblues"],
+    )
+
+    trend = payload["trends"]["focus_weekly"][0]
+    assert trend["asin"] == "B0FOCUS"
+    assert trend["price_change_display"] == "-3.00"
+    assert trend["bsr_change_display"] == "-4 名"
+
+
+def test_competitor_candidates_use_unknown_offsite_and_untracked_bestsellers():
+    rows = [
+        {
+            "deal_id": "x",
+            "source": "slickdeals",
+            "title": "Koonie Portable Handheld Fan",
+            "brand": "unknown",
+            "category": "fan",
+            "thumbs_up": 40,
+            "comments_count": 5,
+            "is_frontpage": True,
+            "url": "https://slickdeals.net/f/1-x",
+            "scraped_at": "2026-06-05T00:00:00+00:00",
+        }
+    ]
+    candidates = summarize_competitor_candidates(
+        offsite_rows=rows,
+        bestsellers_rows=[
+            {
+                "asin": "B0KOONIE",
+                "brand": "Koonie",
+                "rank": 25,
+                "is_tracked": False,
+                "snapshot_at": "2026-06-05T00:00:00+00:00",
+            }
+        ],
+        monitored_brands=["Diveblues"],
+    )
+
+    assert candidates[0]["brand"] == "Koonie"
+    assert candidates[0]["in_top30"] is True
+    assert candidates[0]["source_count"] == 2

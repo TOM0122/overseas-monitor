@@ -6,12 +6,16 @@ import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 from analysis import analyzer
 from scrapers import amazon_bestseller_scraper, hip2save_scraper, keepa_fetcher, slickdeals_scraper
+from utils.data_quality import build_data_quality_alerts
+from utils.db import get_repository
 from utils.dingtalk import get_dingtalk_client
 
 # 这些步骤若成功但返回 0 条记录，视为异常并告警。
@@ -54,6 +58,7 @@ def send_pipeline_alert(
     failed: list[StepResult],
     empty_critical: list[StepResult],
     summary: str,
+    data_quality_alerts: list[str] | None = None,
 ) -> None:
     logger = logging.getLogger(__name__)
     # 注意：文本需包含钉钉机器人「自定义关键词」安全设置允许的词（与日报一致，如「竞品监控」），否则会被钉钉拦截。
@@ -64,6 +69,9 @@ def send_pipeline_alert(
     if empty_critical:
         lines.append("关键步骤 0 条数据：")
         lines += [f"- {r.name}" for r in empty_critical]
+    if data_quality_alerts:
+        lines.append("数据质量异常：")
+        lines += [f"- {alert}" for alert in data_quality_alerts]
     lines += ["", f"汇总：{summary}"]
     try:
         get_dingtalk_client().send_text("\n".join(lines))
@@ -71,6 +79,52 @@ def send_pipeline_alert(
     except Exception:
         # 告警失败不能再让进程崩溃，记录即可。
         logger.exception("Failed to send pipeline alert to DingTalk")
+
+
+def collect_data_quality_alerts() -> list[str]:
+    load_dotenv()
+    tz = ZoneInfo(os.getenv("TIMEZONE", "Asia/Shanghai"))
+    report_date = datetime.now(tz).date()
+    today_start_utc, today_end_utc = analyzer.local_day_bounds_utc(report_date, tz)
+    history_start_utc = today_start_utc - timedelta(days=14)
+    offsite_category = os.getenv("ANALYSIS_OFFSITE_CATEGORY", "fan")
+    bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", keepa_fetcher.DEFAULT_BSR_CATEGORY_ID)
+    drop_ratio = float(os.getenv("DATA_QUALITY_DROP_RATIO", "0.4"))
+
+    repository = get_repository()
+    today_offsite = repository.fetch_slickdeals_deals_between(
+        today_start_utc,
+        today_end_utc,
+        category=offsite_category,
+    )
+    history_offsite = repository.fetch_slickdeals_deals_between(
+        history_start_utc,
+        today_start_utc,
+        category=offsite_category,
+    )
+    today_snapshots = repository.fetch_amazon_snapshots_between(today_start_utc, today_end_utc)
+    history_snapshots = repository.fetch_amazon_snapshots_between(history_start_utc, today_start_utc)
+    today_bestsellers = repository.fetch_amazon_bestsellers_between(
+        today_start_utc,
+        today_end_utc,
+        category_id=bsr_category_id,
+    )
+    history_bestsellers = repository.fetch_amazon_bestsellers_between(
+        history_start_utc,
+        today_start_utc,
+        category_id=bsr_category_id,
+    )
+    return build_data_quality_alerts(
+        report_date=report_date,
+        tz=tz,
+        today_offsite=today_offsite,
+        history_offsite=history_offsite,
+        today_snapshots=today_snapshots,
+        history_snapshots=history_snapshots,
+        today_bestsellers=today_bestsellers,
+        history_bestsellers=history_bestsellers,
+        drop_ratio=drop_ratio,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -155,13 +209,21 @@ def main() -> None:
 
     failed = [r for r in results if not r.ok]
     empty_critical = [r for r in results if r.ok and r.name in CRITICAL_EMPTY_STEPS and r.count == 0]
+    data_quality_alerts: list[str] = []
 
     # dry-run 不告警（无写库无推送）。
-    if not args.dry_run and (failed or empty_critical):
-        send_pipeline_alert(failed, empty_critical, summary)
+    if not args.dry_run:
+        try:
+            data_quality_alerts = collect_data_quality_alerts()
+        except Exception:
+            logger.exception("Failed to collect data quality alerts")
+        if failed or empty_critical or data_quality_alerts:
+            send_pipeline_alert(failed, empty_critical, summary, data_quality_alerts)
 
     if empty_critical:
         logger.warning("Critical steps returned 0 records: %s", [r.name for r in empty_critical])
+    if data_quality_alerts:
+        logger.warning("Data quality alerts: %s", data_quality_alerts)
     if failed:
         logger.error("Pipeline finished with %s failed step(s)", len(failed))
         if not args.dry_run:
