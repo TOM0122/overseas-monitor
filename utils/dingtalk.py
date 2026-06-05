@@ -15,20 +15,34 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 
+def _is_table_line(line: str) -> bool:
+    return line.lstrip().startswith("|")
+
+
 def _normalize_markdown(text: str) -> str:
-    """钉钉 markdown 轻量归一化：去行尾空白、折叠多余空行、去首尾空行。"""
-    lines = [line.rstrip() for line in text.splitlines()]
-    normalized: list[str] = []
+    """钉钉 markdown 轻量归一化：去行尾空白、折叠多余空行、去首尾空行，
+    并确保表格块前后各有一个空行（否则钉钉不会把它渲染成表格）。"""
+    # 1) 去行尾空白 + 折叠多余空行
+    collapsed: list[str] = []
     blank_run = 0
-    for line in lines:
+    for line in (raw.rstrip() for raw in text.splitlines()):
         if line == "":
             blank_run += 1
             if blank_run > 1:
                 continue
         else:
             blank_run = 0
-        normalized.append(line)
-    return "\n".join(normalized).strip()
+        collapsed.append(line)
+    # 2) 表格块前后补空行（钉钉渲染要求；LLM 常把表格紧贴标题/文字）
+    out: list[str] = []
+    for line in collapsed:
+        prev = out[-1] if out else ""
+        if _is_table_line(line) and prev != "" and not _is_table_line(prev):
+            out.append("")
+        elif line != "" and not _is_table_line(line) and out and _is_table_line(out[-1]):
+            out.append("")
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 def _truncate_for_dingtalk(text: str, max_bytes: int) -> str:
