@@ -23,3 +23,6 @@ def test_parse_real_search_page():
         assert deal["category"] == "fan"
         assert deal["price"] is None or (isinstance(deal["price"], float) and deal["price"] >= 0)
         assert deal["discount_pct"] is None or 0 <= deal["discount_pct"] <= 100
+        assert "is_frontpage" in deal
+    # 真实页面里有 Frontpage 徽章，至少应识别出一条
+    assert any(deal.get("is_frontpage") for deal in deals)

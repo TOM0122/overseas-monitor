@@ -90,6 +90,7 @@ create table slickdeals_deals (
   url text,
   thumbs_up int,
   comments_count int,
+  is_frontpage boolean,
   posted_at timestamptz,
   scraped_at timestamptz default now()
 );
@@ -314,7 +315,7 @@ SUPABASE_SERVICE_ROLE_KEY=...
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=...
 LLM_MODEL=deepseek-v4-flash
-LLM_MAX_TOKENS=3000
+LLM_MAX_TOKENS=10000
 LLM_TEMPERATURE=0.2
 DINGTALK_WEBHOOK_URL=...
 DINGTALK_WEBHOOK_SECRET=

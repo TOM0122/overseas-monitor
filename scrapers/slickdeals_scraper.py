@@ -329,6 +329,7 @@ def parse_deal_link(
         "url": url,
         "thumbs_up": extract_thumbs_up(container) if container else 0,
         "comments_count": extract_comments_count(container) if container else 0,
+        "is_frontpage": bool(container.select_one("[class*='dealCardBadge--frontpage']")) if container else False,
         "posted_at": posted_at,
         "scraped_at": scraped_at.isoformat(),
     }

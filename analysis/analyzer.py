@@ -293,6 +293,37 @@ def summarize_offsite_deals(
         default=None,
     )
 
+    monitored_lower = {b.lower() for b in monitored_brands}
+
+    def _source_summary(src: str) -> dict[str, Any]:
+        rows = [d for d in normalized_deals if (d.get("source") or "slickdeals") == src]
+        src_prices = [
+            reasonable_price_or_none(d.get("price"), max_reasonable_price) for d in rows
+        ]
+        src_prices = [p for p in src_prices if p is not None]
+        src_brands = {(d.get("brand") or "unknown") for d in rows} - {"unknown"}
+        return {
+            "deal_count": len(rows),
+            "brand_count": len(src_brands),
+            "price_min": min(src_prices) if src_prices else None,
+            "price_max": max(src_prices) if src_prices else None,
+        }
+
+    def _competitor_rows(src: str, fields: list[str]) -> list[dict[str, Any]]:
+        rows = [
+            d for d in normalized_deals
+            if (d.get("source") or "slickdeals") == src
+            and (d.get("brand") or "").lower() in monitored_lower
+        ]
+        # 品牌归类，热度优先：Frontpage -> 点赞 -> 评论。
+        rows.sort(key=lambda d: (
+            str(d.get("brand") or "").lower(),
+            not bool(d.get("is_frontpage")),
+            -(d.get("thumbs_up") or 0),
+            -(d.get("comments_count") or 0),
+        ))
+        return [{f: d.get(f) for f in fields} for d in rows]
+
     return {
         "source_counts": dict(sorted(source_counts.items())),
         "category_counts": dict(sorted(category_counts.items())),
@@ -307,6 +338,18 @@ def summarize_offsite_deals(
         "monitored_brands": list(by_brand.values()),
         "other_brands": dict(sorted(other_brands.items())),
         "top_deals": normalized_deals[:limit],
+        "summary_by_source": {
+            "slickdeals": _source_summary("slickdeals"),
+            "hip2save": _source_summary("hip2save"),
+        },
+        "slickdeals_competitor_deals": _competitor_rows(
+            "slickdeals",
+            ["brand", "title", "discount_pct", "is_frontpage", "thumbs_up", "comments_count", "url"],
+        ),
+        "hip2save_competitor_deals": _competitor_rows(
+            "hip2save",
+            ["brand", "title", "discount_pct", "comments_count", "posted_at", "url"],
+        ),
     }
 
 
@@ -325,6 +368,7 @@ def normalize_deal(deal: dict[str, Any], tz: ZoneInfo, max_reasonable_price: flo
         "discount_pct": to_float_or_none(deal.get("discount_pct")),
         "thumbs_up": to_int_or_none(deal.get("thumbs_up")),
         "comments_count": to_int_or_none(deal.get("comments_count")),
+        "is_frontpage": deal.get("is_frontpage"),
         "posted_at": to_local_iso(deal.get("posted_at"), tz),
         "scraped_at": to_local_iso(deal.get("scraped_at"), tz),
         "url": deal.get("url"),

@@ -26,7 +26,7 @@ class OpenAICompatibleClient:
         self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
         self.base_url = (base_url or os.getenv("LLM_BASE_URL", "https://api.deepseek.com")).rstrip("/")
         self.model = model or os.getenv("LLM_MODEL", "deepseek-v4-flash")
-        self.max_tokens = max_tokens or int(os.getenv("LLM_MAX_TOKENS", "3000"))
+        self.max_tokens = max_tokens or int(os.getenv("LLM_MAX_TOKENS", "10000"))
         self.temperature = (
             temperature
             if temperature is not None

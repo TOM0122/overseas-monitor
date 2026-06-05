@@ -275,3 +275,27 @@ def test_offsite_relevance_recheck_drops_stored_noise():
     ids = {deal["deal_id"] for deal in out["top_deals"]}
     assert "dunk" not in ids
     assert ids == {"real"}
+
+
+def test_offsite_competitor_deal_splits():
+    tz = ZoneInfo("Asia/Shanghai")
+    deals = [
+        {"deal_id": "s1", "source": "slickdeals", "title": "Gaiatop Handheld Fan",
+         "brand": "Gaiatop", "category": "fan", "price": 9.99, "discount_pct": 50.0,
+         "is_frontpage": True, "thumbs_up": 80, "comments_count": 12,
+         "url": "https://slickdeals.net/f/1-x"},
+        {"deal_id": "s2", "source": "slickdeals", "title": "NoName Fan",
+         "brand": "unknown", "category": "fan", "price": 8.0, "is_frontpage": False,
+         "thumbs_up": 3, "comments_count": 0, "url": "https://slickdeals.net/f/2-x"},
+        {"deal_id": "h1", "source": "hip2save", "title": "Diveblues Fan Post",
+         "brand": "Diveblues", "category": "fan", "price": 11.0, "discount_pct": 40.0,
+         "comments_count": 4, "url": "https://hip2save.com/deals/diveblues-fan/"},
+    ]
+    out = summarize_offsite_deals(deals, tz, 20, ["Gaiatop", "Diveblues"], 200.0)
+    sd = out["slickdeals_competitor_deals"]
+    hp = out["hip2save_competitor_deals"]
+    assert {d["brand"] for d in sd} == {"Gaiatop"}            # 仅监控品牌进表
+    assert sd[0]["is_frontpage"] is True and sd[0]["thumbs_up"] == 80
+    assert {d["brand"] for d in hp} == {"Diveblues"}
+    assert out["summary_by_source"]["slickdeals"]["deal_count"] == 2   # 总览含非监控计数
+    assert out["summary_by_source"]["slickdeals"]["brand_count"] == 1  # 仅 Gaiatop 非 unknown
