@@ -411,11 +411,11 @@ def summarize_offsite_deals(
         },
         "slickdeals_competitor_deals": _competitor_rows(
             "slickdeals",
-            ["brand", "title", "discount_pct", "is_frontpage", "thumbs_up", "comments_count", "url"],
+            ["brand", "title", "discount_pct", "price", "is_frontpage", "thumbs_up", "comments_count", "url"],
         ),
         "hip2save_competitor_deals": _competitor_rows(
             "hip2save",
-            ["brand", "title", "discount_pct", "comments_count", "posted_at", "url"],
+            ["brand", "title", "discount_pct", "price", "comments_count", "posted_at", "url"],
         ),
     }
 
