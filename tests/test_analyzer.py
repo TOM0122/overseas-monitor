@@ -187,6 +187,76 @@ def test_bsr_monitor_sorted_by_current_rank():
     assert ranks == [1, 37, 51, None]
 
 
+def test_bsr_monitor_adds_non_top30_competitors_with_price():
+    top30_rows = [
+        {
+            "asin": f"B0TOP{i:05d}",
+            "brand": "Other",
+            "title": "Other Fan",
+            "rank": i,
+            "is_tracked": False,
+            "snapshot_at": "2026-06-06T00:00:00+00:00",
+        }
+        for i in range(1, 31)
+    ]
+    top30_rows[9] = {
+        "asin": "B0IN30",
+        "brand": "InTop",
+        "title": "InTop Fan",
+        "rank": 10,
+        "is_tracked": True,
+        "snapshot_at": "2026-06-06T00:00:00+00:00",
+    }
+    payload = build_report_payload(
+        report_date=date(2026, 6, 6),
+        tz=ZoneInfo("Asia/Shanghai"),
+        slickdeals=[],
+        amazon_today=[
+            {
+                "asin": "B0OUT30",
+                "brand": "OutTop",
+                "bsr": 40,
+                "price": 13.99,
+                "buy_box_price": 12.99,
+                "bsr_category_id": "3303867011",
+                "snapshot_at": "2026-06-06T00:00:00+00:00",
+            }
+        ],
+        amazon_yesterday=[],
+        top_deals_limit=20,
+        monitored_brands=["Diveblues", "InTop", "OutTop"],
+        bestsellers_today=[
+            *top30_rows,
+            {
+                "asin": "B0OUT30",
+                "brand": "OutTop",
+                "title": "OutTop Fan",
+                "rank": 40,
+                "is_tracked": True,
+                "snapshot_at": "2026-06-06T00:00:00+00:00",
+            },
+        ],
+        bestsellers_yesterday=[
+            {
+                "asin": "B0OUT30",
+                "brand": "OutTop",
+                "title": "OutTop Fan",
+                "rank": 45,
+                "is_tracked": True,
+                "snapshot_at": "2026-06-05T00:00:00+00:00",
+            }
+        ],
+        focus_brand="Diveblues",
+    )
+
+    non_top30 = payload["bsr_monitor"]["non_top30_competitors"]
+    assert [item["asin"] for item in non_top30] == ["B0OUT30"]
+    assert non_top30[0]["brand"] == "OutTop"
+    assert non_top30[0]["price"] == 12.99
+    assert non_top30[0]["current_rank"] == 40
+    assert non_top30[0]["rank_change_display"] == "-5 名"
+
+
 def test_offsite_price_floor_drops_cheap_deals():
     tz = ZoneInfo("Asia/Shanghai")
     deals = [

@@ -178,6 +178,26 @@ def build_report_payload(
         yesterday = yesterday_latest.get(asin)
         bsr_items.append(build_bsr_item(today, yesterday, tz))
     bestsellers_today_batch = latest_bestseller_batch_rows(bestsellers_today or [])
+    bsr_monitor = summarize_bsr_monitor(
+        bsr_items,
+        bestsellers_today or [],
+        bestsellers_yesterday or [],
+        focus_brand,
+    )
+    top30_price_monitor = summarize_top30_price_monitor(
+        bestsellers_today or [],
+        bestsellers_yesterday or [],
+        limit=min(top30_limit, 30),
+    )
+    top30_asins = latest_top_bestseller_asins(
+        bestsellers_today or [],
+        limit=min(top30_limit, 30),
+    )
+    bsr_monitor["non_top30_competitors"] = summarize_non_top30_competitors(
+        bsr_monitor=bsr_monitor,
+        top30_asins=top30_asins,
+        snapshots=amazon_today,
+    )
 
     return {
         "report_date": report_date.isoformat(),
@@ -200,17 +220,8 @@ def build_report_payload(
                 1 for asin in today_latest if asin in yesterday_latest
             ),
         },
-        "bsr_monitor": summarize_bsr_monitor(
-            bsr_items,
-            bestsellers_today or [],
-            bestsellers_yesterday or [],
-            focus_brand,
-        ),
-        "amazon_top30_price_monitor": summarize_top30_price_monitor(
-            bestsellers_today or [],
-            bestsellers_yesterday or [],
-            limit=min(top30_limit, 30),
-        ),
+        "bsr_monitor": bsr_monitor,
+        "amazon_top30_price_monitor": top30_price_monitor,
         "bestseller_monitor": summarize_bestseller_rankings(
             bestsellers_today or [],
             bestsellers_yesterday or [],
@@ -552,6 +563,39 @@ def summarize_bsr(items: list[dict[str, Any]], focus_brand: str) -> dict[str, An
     return {"focus": focus, "competitors": competitors}
 
 
+def summarize_non_top30_competitors(
+    *,
+    bsr_monitor: dict[str, Any],
+    top30_asins: set[str],
+    snapshots: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    snapshot_by_asin = {
+        normalize_asin(asin): snapshot
+        for asin, snapshot in latest_snapshot_by_asin(snapshots).items()
+    }
+    items = []
+    for competitor in bsr_monitor.get("competitors", []):
+        asin = normalize_asin(competitor.get("asin"))
+        current_rank = to_int_or_none(competitor.get("current_rank"))
+        if asin in top30_asins:
+            continue
+        if current_rank is not None and current_rank <= 30:
+            continue
+        snapshot = snapshot_by_asin.get(asin) or {}
+        price = to_float_or_none(snapshot.get("buy_box_price")) or to_float_or_none(snapshot.get("price"))
+        items.append(
+            {
+                "brand": competitor.get("brand"),
+                "asin": competitor.get("asin"),
+                "price": price,
+                "current_rank": current_rank,
+                "rank_change_display": competitor.get("rank_change_display"),
+            }
+        )
+    items.sort(key=lambda item: item.get("current_rank") or 999999)
+    return items
+
+
 def summarize_top30_price_monitor(
     today_rows: list[dict[str, Any]],
     yesterday_rows: list[dict[str, Any]],
@@ -748,6 +792,16 @@ def latest_bestseller_by_asin(rows: list[dict[str, Any]]) -> dict[str, dict[str,
         if previous_time is None or current_time > previous_time:
             latest[asin] = row
     return latest
+
+
+def latest_top_bestseller_asins(rows: list[dict[str, Any]], *, limit: int = 30) -> set[str]:
+    latest = latest_bestseller_by_asin(rows)
+    sorted_rows = sorted(latest.values(), key=lambda row: to_int_or_none(row.get("rank")) or 999999)
+    return {
+        normalize_asin(row.get("asin"))
+        for row in sorted_rows[: min(limit, 30)]
+        if normalize_asin(row.get("asin"))
+    }
 
 
 def latest_bestseller_batch_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
