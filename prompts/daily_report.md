@@ -28,10 +28,10 @@
 
 各段要求：
 - 总览：2-3 句，概括今天 `category_label` 亚马逊 Top30 与站外整体态势，点出最值得注意的 1 个异动；可参考 `trends`，但只写最重要的 1 条。
-- 亚马逊 Top30 价格监控：用 `amazon_top30_price_monitor`，先写 1-2 句模块总览，必须包含 `summary.price_change_count`、`summary.rank_entry_count`、`summary.rank_exit_count`；如 `summary.missing_current_price_count` 或 `summary.missing_baseline_price_count` 大于 0，用一句话说明价格缺失口径。随后只输出两张紧凑表：
-  - **价格变动**：数据源 `amazon_top30_price_monitor.price_changes`，列「排名 | 品牌 | ASIN | 当前价 | 较昨日」。最多 10 行。只列确有价格变化的 ASIN；没有变化写「今日Top30暂无可确认价格变动」。
+- 亚马逊 Top30 价格监控：用 `amazon_top30_price_monitor`。如果 `summary.today_data_missing` 为真，整段只写「今日 Top30 榜单数据缺失，无法对比（请排查 Keepa/榜单抓取）」，不要渲染任何表格。否则先写 1-2 句模块总览，必须包含 `summary.price_change_count`、`summary.mover_count`、`summary.rank_entry_count`、`summary.rank_exit_count`；如 `summary.missing_current_price_count` 或 `summary.missing_baseline_price_count` 大于 0，用一句话说明价格缺失口径。随后只输出两张紧凑表：
+  - **Top30 异动**：数据源 `amazon_top30_price_monitor.price_changes`，列「排名 | 品牌 | ASIN | 当前价 | 价格较昨日 | 排名较昨日」。最多 12 行。只列确有价格或排名变化的 ASIN；「排名较昨日」使用 `rank_move_display`（如 +N位 / -N位 / 持平 / 数据缺失）。没有异动写「今日 Top30 无价格或排名异动」。
   - **Top30更新**：合并 `amazon_top30_price_monitor.rank_entries` 与 `amazon_top30_price_monitor.rank_exits`，列「方向 | 品牌 | ASIN | 当前排名 | 昨日排名」。最多 20 行。只列进入/掉出Top30的 ASIN；没有进出写「今日Top30暂无进出变化」。
-  - 两张表格下方各加 1 句小结，分别点出最大价格变动和最值得关注的进出榜 ASIN。**不要输出 `monitored_rows` 全量 Top30 表；不要输出30行状态表。** `price_change_display` 为「数据缺失」时照写「数据缺失」，不要写 0 或持平。
+  - 两张表格下方各加 1 句小结，分别点出最大价格/排名异动和最值得关注的进出榜 ASIN。**不要输出 `monitored_rows` 全量 Top30 表；不要输出30行状态表。** `price_change_display` 或 `rank_move_display` 为「数据缺失」时照写「数据缺失」，不要写 0。
 - BSR 监测（辅助板块，极简）：口径为 `bsr_category.name`，只渲染 `bsr_monitor.focus`（自有/重点品牌），用紧凑 Markdown 表格，列「品牌 | ASIN | 当前排名 | 较昨日 | 备注」（必须用 `|` 分隔成多列，不要用斜杠并成一列）；每个 ASIN 只写“#N”和“{rank_change_display}”。备注列只能写「数据缺失」或「—」，不要写“上升/下降/排名上升/排名下降”等解释，不要写百分比。`bsr_monitor.focus` 为空写「暂无自有品牌榜单/快照数据」，不要写“未配置 ASIN”。**不要渲染 `bsr_monitor.competitors` 竞品 BSR 表；Top30 表已经覆盖竞品排名。不要输出“快速异动 / 新进榜 / 上升 / 下降”等任何 `bestseller_monitor` 内容。** 今天或昨天缺数据写「数据缺失」。
 - 站外每日发现（重点板块）：先 1-2 句总览——分别说 Slickdeals（`offsite.summary_by_source.slickdeals`：品牌数 `brand_count`、Deal 数 `deal_count`、价位段 `price_min`-`price_max`）与 Hip2save（`offsite.summary_by_source.hip2save` 同上），并点出全站最低价（`offsite.price_range.lowest_price_deal` 的 `brand` 与 `price`）。随后给**两张紧凑 Markdown 表格**，均只列**主要竞品**（监控品牌）的 Deal、按品牌归类；**表格内不放标题**（标题太长影响观感，需要看详情走链接）：
   - **Slickdeals**（数据源 `offsite.slickdeals_competitor_deals`），列「品牌 | 折扣 | Frontpage | 👍 | 💬 | 链接」：`discount_pct` 写「N%」、空写「—」；`is_frontpage` true→「是」/ false→「否」/ 空→「未知」；`thumbs_up`、`comments_count` 写数字、空写「—」；`url` 用 Markdown 链接（文案如「查看」）。**表格正下方加 1-2 句小结**，点出今日 Slickdeals 上最值得注意的竞品 Deal（点赞/评论最高、上了 Frontpage、或折扣最猛的），用「品牌 + 简短标题（取自 `title`）+ 关键数据」描述。

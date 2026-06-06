@@ -46,7 +46,7 @@ def run(*, dry_run: bool = False, limit: int | None = None) -> list[dict[str, An
     enrich_brands = parse_bool(os.getenv("KEEPA_BESTSELLER_ENRICH", "true"))
     enrich_limit = int(os.getenv("KEEPA_BESTSELLER_ENRICH_LIMIT", str(requested_limit)))
     enrich_prices = parse_bool(os.getenv("KEEPA_BESTSELLER_PRICE_ENRICH", "true"))
-    price_limit = normalize_price_limit(requested_limit=requested_limit)
+    price_limit = min(requested_limit, 30)
     request_delay_seconds = float(os.getenv("KEEPA_REQUEST_DELAY_SECONDS", "3"))
     keepa_timeout_seconds = float(os.getenv("KEEPA_QUERY_TIMEOUT_SECONDS", "180"))
 
@@ -199,11 +199,6 @@ def extract_bestseller_price(product: dict[str, Any]) -> dict[str, Any]:
 
 def parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def normalize_price_limit(*, requested_limit: int) -> int:
-    configured_price_limit = int(os.getenv("KEEPA_BESTSELLER_PRICE_LIMIT", "30"))
-    return min(max(configured_price_limit, 30), requested_limit, 30)
 
 
 def configure_logging() -> None:

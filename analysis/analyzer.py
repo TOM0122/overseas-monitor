@@ -565,11 +565,11 @@ def summarize_top30_price_monitor(
     top_limit = min(limit, 30)
     today_top30 = top_today[:top_limit]
     yesterday_top30 = top_yesterday[:top_limit]
+    today_missing = len(today_top30) == 0
     today_top30_asins = {normalize_asin(row.get("asin")) for row in today_top30}
     yesterday_top30_asins = {normalize_asin(row.get("asin")) for row in yesterday_top30}
 
     monitored_rows = []
-    price_changes = []
     missing_current_prices = 0
     missing_baseline_prices = 0
     for row in today_top30:
@@ -584,20 +584,33 @@ def summarize_top30_price_monitor(
             missing_baseline_prices += 1
         item = build_top30_price_item(row, previous, price_change)
         monitored_rows.append(item)
-        if price_change not in (None, 0):
-            price_changes.append(item)
 
-    rank_entries = [
-        build_top30_rank_move_item(row, yesterday_latest.get(normalize_asin(row.get("asin"))), "进入")
-        for row in today_top30
-        if normalize_asin(row.get("asin")) not in yesterday_top30_asins
+    price_changes = [item for item in monitored_rows if item.get("price_change") not in (None, 0)]
+    movers = [
+        item for item in monitored_rows
+        if item.get("price_change") not in (None, 0) or item.get("rank_move") not in (None, 0)
     ]
-    rank_exits = [
-        build_top30_rank_move_item(today_latest.get(normalize_asin(row.get("asin"))), row, "掉出")
-        for row in yesterday_top30
-        if normalize_asin(row.get("asin")) not in today_top30_asins
-    ]
+    if today_missing:
+        rank_entries = []
+        rank_exits = []
+        price_changes = []
+        movers = []
+    else:
+        rank_entries = [
+            build_top30_rank_move_item(row, yesterday_latest.get(normalize_asin(row.get("asin"))), "进入")
+            for row in today_top30
+            if normalize_asin(row.get("asin")) not in yesterday_top30_asins
+        ]
+        rank_exits = [
+            build_top30_rank_move_item(today_latest.get(normalize_asin(row.get("asin"))), row, "掉出")
+            for row in yesterday_top30
+            if normalize_asin(row.get("asin")) not in today_top30_asins
+        ]
     price_changes.sort(key=lambda item: abs(item["price_change"]), reverse=True)
+    movers.sort(
+        key=lambda item: (abs(item.get("price_change") or 0), abs(item.get("rank_move") or 0)),
+        reverse=True,
+    )
     rank_entries.sort(key=lambda item: item.get("current_rank") or 999999)
     rank_exits.sort(key=lambda item: item.get("yesterday_rank") or 999999)
 
@@ -606,13 +619,15 @@ def summarize_top30_price_monitor(
             "tracked_top_n": top_limit,
             "today_count": len(today_top30),
             "yesterday_count": len(yesterday_top30),
+            "today_data_missing": today_missing,
             "price_change_count": len(price_changes),
+            "mover_count": len(movers),
             "rank_entry_count": len(rank_entries),
             "rank_exit_count": len(rank_exits),
             "missing_current_price_count": missing_current_prices,
             "missing_baseline_price_count": missing_baseline_prices,
         },
-        "price_changes": price_changes[:10],
+        "price_changes": movers[:12],
         "rank_entries": rank_entries[:10],
         "rank_exits": rank_exits[:10],
         "monitored_rows": monitored_rows,
@@ -624,14 +639,23 @@ def build_top30_price_item(
     previous: dict[str, Any] | None,
     price_change: float | None,
 ) -> dict[str, Any]:
+    current_rank = to_int_or_none(row.get("rank"))
+    yesterday_rank = to_int_or_none(previous.get("rank")) if previous else None
+    rank_move = (
+        yesterday_rank - current_rank
+        if current_rank is not None and yesterday_rank is not None
+        else None
+    )
     return {
-        "rank": to_int_or_none(row.get("rank")),
+        "rank": current_rank,
         "brand": row.get("brand") or "unknown",
         "asin": row.get("asin"),
         "price": to_float_or_none(row.get("price")),
         "buy_box_price": to_float_or_none(row.get("buy_box_price")),
         "price_source": row.get("price_source"),
-        "yesterday_rank": to_int_or_none(previous.get("rank")) if previous else None,
+        "yesterday_rank": yesterday_rank,
+        "rank_move": rank_move,
+        "rank_move_display": format_rank_move(rank_move),
         "yesterday_price": to_float_or_none(previous.get("price")) if previous else None,
         "price_change": price_change,
         "price_change_display": format_price_change(price_change),
@@ -1045,6 +1069,15 @@ def format_price_change(change_abs: Any) -> str:
     if change == 0:
         return "持平"
     return f"{change:+.2f}"
+
+
+def format_rank_move(rank_move: Any) -> str:
+    value = to_int_or_none(rank_move)
+    if value is None:
+        return "数据缺失"
+    if value == 0:
+        return "持平"
+    return f"+{value}位" if value > 0 else f"{value}位"
 
 
 def pct_change(current: Any, previous: Any) -> float | None:

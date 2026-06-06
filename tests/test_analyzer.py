@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import date
 from zoneinfo import ZoneInfo
 
-from analysis.analyzer import build_report_payload, summarize_competitor_candidates, summarize_offsite_deals
+from analysis.analyzer import (
+    build_report_payload,
+    build_top30_price_item,
+    summarize_competitor_candidates,
+    summarize_offsite_deals,
+)
 
 
 def test_bsr_monitor_prefers_bestseller_rank_over_snapshot_bsr():
@@ -336,8 +341,10 @@ def test_top30_price_monitor_tracks_30_but_reports_changes_only():
 
     monitor = payload["amazon_top30_price_monitor"]
     assert monitor["summary"]["tracked_top_n"] == 30
+    assert monitor["summary"]["today_data_missing"] is False
     assert len(monitor["monitored_rows"]) == 30
     assert monitor["summary"]["price_change_count"] == 0
+    assert monitor["summary"]["mover_count"] == 0
     assert monitor["summary"]["missing_baseline_price_count"] == 30
     assert monitor["price_changes"] == []
 
@@ -374,6 +381,73 @@ def test_top30_price_monitor_formats_price_change_after_baseline_exists():
     item = payload["amazon_top30_price_monitor"]["price_changes"][0]
     assert item["price_change"] == -2.0
     assert item["price_change_display"] == "-2.00"
+    assert item["rank_move"] == 1
+    assert item["rank_move_display"] == "+1位"
+
+
+def test_top30_price_item_formats_rank_move():
+    up = build_top30_price_item(
+        {"asin": "B0UP", "brand": "Brand", "rank": 5, "price": 9.99},
+        {"asin": "B0UP", "brand": "Brand", "rank": 10, "price": 9.99},
+        0,
+    )
+    down = build_top30_price_item(
+        {"asin": "B0DOWN", "brand": "Brand", "rank": 8, "price": 9.99},
+        {"asin": "B0DOWN", "brand": "Brand", "rank": 3, "price": 9.99},
+        0,
+    )
+
+    assert up["rank_move"] == 5
+    assert up["rank_move_display"] == "+5位"
+    assert down["rank_move"] == -5
+    assert down["rank_move_display"] == "-5位"
+
+
+def test_top30_price_monitor_reports_rank_only_movers():
+    payload = build_report_payload(
+        report_date=date(2026, 6, 6),
+        tz=ZoneInfo("Asia/Shanghai"),
+        slickdeals=[],
+        amazon_today=[],
+        amazon_yesterday=[],
+        top_deals_limit=20,
+        monitored_brands=["Diveblues"],
+        bestsellers_today=[
+            {"asin": "B0MOVE", "brand": "Brand", "rank": 5, "price": 10, "snapshot_at": "2026-06-06T00:00:00+00:00"},
+        ],
+        bestsellers_yesterday=[
+            {"asin": "B0MOVE", "brand": "Brand", "rank": 10, "price": 10, "snapshot_at": "2026-06-05T00:00:00+00:00"},
+        ],
+    )
+
+    monitor = payload["amazon_top30_price_monitor"]
+    assert monitor["summary"]["price_change_count"] == 0
+    assert monitor["summary"]["mover_count"] == 1
+    assert monitor["price_changes"][0]["asin"] == "B0MOVE"
+    assert monitor["price_changes"][0]["rank_move_display"] == "+5位"
+
+
+def test_top30_price_monitor_today_missing_does_not_report_all_exits():
+    payload = build_report_payload(
+        report_date=date(2026, 6, 6),
+        tz=ZoneInfo("Asia/Shanghai"),
+        slickdeals=[],
+        amazon_today=[],
+        amazon_yesterday=[],
+        top_deals_limit=20,
+        monitored_brands=["Diveblues"],
+        bestsellers_today=[],
+        bestsellers_yesterday=[
+            {"asin": "B0YDAY1", "brand": "Brand", "rank": 1, "price": 10, "snapshot_at": "2026-06-05T00:00:00+00:00"},
+            {"asin": "B0YDAY2", "brand": "Brand", "rank": 2, "price": 11, "snapshot_at": "2026-06-05T00:00:00+00:00"},
+        ],
+    )
+
+    monitor = payload["amazon_top30_price_monitor"]
+    assert monitor["summary"]["today_data_missing"] is True
+    assert monitor["rank_entries"] == []
+    assert monitor["rank_exits"] == []
+    assert monitor["price_changes"] == []
 
 
 def test_top30_price_monitor_reports_entries_and_exits():
