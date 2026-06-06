@@ -290,7 +290,7 @@ KEEPA_BESTSELLER_PRICE_LIMIT=30
 
 `KEEPA_FETCH_BUYBOX=true` 会额外消耗 Keepa token，但可以得到 `buy_box_price`。如果 token 紧张，可以临时改成 `false`，此时 `buy_box_price` 可能为空。
 `KEEPA_BESTSELLER_ENRICH=true` 会为类目榜单 ASIN 额外补充 `brand/title`，每个 ASIN 约消耗 1 个 Keepa token；token 紧张时可调小 `KEEPA_BESTSELLER_ENRICH_LIMIT` 或设为 `false`。
-`KEEPA_BESTSELLER_PRICE_ENRICH=true` 会为类目前 30 名额外补充价格字段；默认 `KEEPA_BESTSELLER_PRICE_LIMIT=30`，不要扩大到 Top100，避免 Keepa token 失控。
+`KEEPA_BESTSELLER_PRICE_ENRICH=true` 会为类目前 30 名额外补充价格字段；代码会保证榜单数量足够时至少覆盖 Top30，即使 Railway 变量误设为 20 也不会降级到 Top20。不要扩大到 Top100，避免 Keepa token 失控。
 `KEEPA_QUERY_TIMEOUT_SECONDS` 会给单次 Keepa 调用加 wall-clock 超时，避免 `wait=True` 因 token 或网络问题卡住整条 Pipeline。
 
 验证 ASIN 拉取，不写数据库：
@@ -374,7 +374,7 @@ python -m analysis.analyzer --dry-run
 python -m analysis.analyzer --no-push
 ```
 
-上线或调整新增日报模块后，必须用 `--no-push` 实测整份报告 UTF-8 字节数低于 `DINGTALK_MARKDOWN_MAX_BYTES`（默认 19000）。亚马逊 Top30 价格监控表硬上限为 30 行，且不输出标题列；上线首日因昨日历史行没有价格字段，「较昨日」会显示「数据缺失」，不要用 0 代替。Top30 上线后，BSR 模块只渲染自有/重点品牌排名，竞品 BSR 表不再输出。
+上线或调整新增日报模块后，必须用 `--no-push` 实测整份报告 UTF-8 字节数低于 `DINGTALK_MARKDOWN_MAX_BYTES`（默认 19000）。亚马逊 Top30 价格监控不再输出 30 行全量状态表，只渲染「价格变动」与「Top30更新（进入/掉出）」两张紧凑表；上线首日因昨日历史行没有价格字段，「较昨日」会显示「数据缺失」，不要用 0 代替。Top30 上线后，BSR 模块只渲染自有/重点品牌排名，竞品 BSR 表不再输出。
 
 正式生成并推送钉钉：
 

@@ -166,6 +166,12 @@ def test_bestseller_price_prefers_buy_box():
     }
 
 
+def test_bestseller_price_limit_is_at_least_top30(monkeypatch):
+    monkeypatch.setenv("KEEPA_BESTSELLER_PRICE_LIMIT", "20")
+    assert b.normalize_price_limit(requested_limit=100) == 30
+    assert b.normalize_price_limit(requested_limit=25) == 25
+
+
 def test_sanitize_rows_drops_and_nulls():
     rows = sanitize_rows(
         "t",

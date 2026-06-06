@@ -301,7 +301,7 @@ def test_offsite_competitor_deal_splits():
     assert out["summary_by_source"]["slickdeals"]["brand_count"] == 1  # 仅 Gaiatop 非 unknown
 
 
-def test_top30_price_monitor_caps_rows_and_keeps_first_day_missing():
+def test_top30_price_monitor_tracks_30_but_reports_changes_only():
     today = [
         {
             "asin": f"B0{i:08d}",
@@ -334,11 +334,12 @@ def test_top30_price_monitor_caps_rows_and_keeps_first_day_missing():
         top30_limit=30,
     )
 
-    rows = payload["amazon_top30_price_monitor"]
-    assert len(rows) == 30
-    assert rows[0]["rank"] == 1
-    assert rows[0]["price"] == 11.0
-    assert rows[0]["price_change_display"] == "数据缺失"
+    monitor = payload["amazon_top30_price_monitor"]
+    assert monitor["summary"]["tracked_top_n"] == 30
+    assert len(monitor["monitored_rows"]) == 30
+    assert monitor["summary"]["price_change_count"] == 0
+    assert monitor["summary"]["missing_baseline_price_count"] == 30
+    assert monitor["price_changes"] == []
 
 
 def test_top30_price_monitor_formats_price_change_after_baseline_exists():
@@ -370,9 +371,63 @@ def test_top30_price_monitor_formats_price_change_after_baseline_exists():
         ],
     )
 
-    item = payload["amazon_top30_price_monitor"][0]
+    item = payload["amazon_top30_price_monitor"]["price_changes"][0]
     assert item["price_change"] == -2.0
     assert item["price_change_display"] == "-2.00"
+
+
+def test_top30_price_monitor_reports_entries_and_exits():
+    payload = build_report_payload(
+        report_date=date(2026, 6, 6),
+        tz=ZoneInfo("Asia/Shanghai"),
+        slickdeals=[],
+        amazon_today=[],
+        amazon_yesterday=[],
+        top_deals_limit=20,
+        monitored_brands=["Diveblues"],
+        bestsellers_today=[
+            {"asin": "B0STAY", "brand": "Stay", "rank": 1, "price": 10, "snapshot_at": "2026-06-06T00:00:00+00:00"},
+            {"asin": "B0ENTER", "brand": "Enter", "rank": 2, "price": 11, "snapshot_at": "2026-06-06T00:00:00+00:00"},
+            {"asin": "B0EXIT", "brand": "Exit", "rank": 31, "price": 12, "snapshot_at": "2026-06-06T00:00:00+00:00"},
+        ],
+        bestsellers_yesterday=[
+            {"asin": "B0STAY", "brand": "Stay", "rank": 1, "price": 10, "snapshot_at": "2026-06-05T00:00:00+00:00"},
+            {"asin": "B0EXIT", "brand": "Exit", "rank": 2, "price": 12, "snapshot_at": "2026-06-05T00:00:00+00:00"},
+            {"asin": "B0ENTER", "brand": "Enter", "rank": 31, "price": 11, "snapshot_at": "2026-06-05T00:00:00+00:00"},
+        ],
+        top30_limit=2,
+    )
+
+    monitor = payload["amazon_top30_price_monitor"]
+    assert monitor["summary"]["rank_entry_count"] == 1
+    assert monitor["summary"]["rank_exit_count"] == 1
+    assert monitor["rank_entries"][0]["asin"] == "B0ENTER"
+    assert monitor["rank_entries"][0]["direction"] == "进入"
+    assert monitor["rank_exits"][0]["asin"] == "B0EXIT"
+    assert monitor["rank_exits"][0]["direction"] == "掉出"
+
+
+def test_top30_price_monitor_uses_latest_bestseller_batch_only():
+    payload = build_report_payload(
+        report_date=date(2026, 6, 6),
+        tz=ZoneInfo("Asia/Shanghai"),
+        slickdeals=[],
+        amazon_today=[],
+        amazon_yesterday=[],
+        top_deals_limit=20,
+        monitored_brands=["Diveblues"],
+        bestsellers_today=[
+            {"asin": "B0OLD", "brand": "Old", "rank": 1, "price": 9, "snapshot_at": "2026-06-06T01:00:00+00:00"},
+            {"asin": "B0NEW", "brand": "New", "rank": 1, "price": 10, "snapshot_at": "2026-06-06T02:00:00+00:00"},
+        ],
+        bestsellers_yesterday=[
+            {"asin": "B0NEW", "brand": "New", "rank": 1, "price": 10, "snapshot_at": "2026-06-05T02:00:00+00:00"},
+        ],
+    )
+
+    monitor = payload["amazon_top30_price_monitor"]
+    asins = {row["asin"] for row in monitor["monitored_rows"]}
+    assert asins == {"B0NEW"}
 
 
 def test_trends_compare_current_to_week_start_same_bsr_category():

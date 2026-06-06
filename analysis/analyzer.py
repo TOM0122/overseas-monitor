@@ -58,7 +58,7 @@ def run(
     bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", "3303867011")
     bsr_category_name = os.getenv("KEEPA_BSR_CATEGORY_NAME", "Best Sellers in Personal Fans")
     rank_up_threshold = int(os.getenv("BESTSELLER_RANK_UP_THRESHOLD", "10"))
-    top30_limit = min(int(os.getenv("ANALYSIS_TOP30_PRICE_LIMIT", "30")), 30)
+    top30_limit = 30
     monitored_brands = load_monitored_brands()
 
     today_start_utc, today_end_utc = local_day_bounds_utc(report_date, tz)
@@ -177,6 +177,7 @@ def build_report_payload(
     for asin, today in sorted(today_latest.items()):
         yesterday = yesterday_latest.get(asin)
         bsr_items.append(build_bsr_item(today, yesterday, tz))
+    bestsellers_today_batch = latest_bestseller_batch_rows(bestsellers_today or [])
 
     return {
         "report_date": report_date.isoformat(),
@@ -194,7 +195,7 @@ def build_report_payload(
             "amazon_snapshots_today": len(amazon_today),
             "amazon_bsr_snapshots_today": len(bsr_today),
             "amazon_bsr_asins_today": len(today_latest),
-            "amazon_bestsellers_today": len(bestsellers_today or []),
+            "amazon_bestsellers_today": len(bestsellers_today_batch),
             "amazon_asins_with_yesterday_baseline": sum(
                 1 for asin in today_latest if asin in yesterday_latest
             ),
@@ -556,33 +557,105 @@ def summarize_top30_price_monitor(
     yesterday_rows: list[dict[str, Any]],
     *,
     limit: int = 30,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     today_latest = latest_bestseller_by_asin(today_rows)
     yesterday_latest = latest_bestseller_by_asin(yesterday_rows)
     top_today = sorted(today_latest.values(), key=lambda row: to_int_or_none(row.get("rank")) or 999999)
-    rows = []
-    for row in top_today[: min(limit, 30)]:
+    top_yesterday = sorted(yesterday_latest.values(), key=lambda row: to_int_or_none(row.get("rank")) or 999999)
+    top_limit = min(limit, 30)
+    today_top30 = top_today[:top_limit]
+    yesterday_top30 = top_yesterday[:top_limit]
+    today_top30_asins = {normalize_asin(row.get("asin")) for row in today_top30}
+    yesterday_top30_asins = {normalize_asin(row.get("asin")) for row in yesterday_top30}
+
+    monitored_rows = []
+    price_changes = []
+    missing_current_prices = 0
+    missing_baseline_prices = 0
+    for row in today_top30:
         asin = normalize_asin(row.get("asin"))
         previous = yesterday_latest.get(asin)
         current_price = to_float_or_none(row.get("price"))
         previous_price = to_float_or_none(previous.get("price")) if previous else None
         price_change = diff(current_price, previous_price)
-        rows.append(
-            {
-                "rank": to_int_or_none(row.get("rank")),
-                "brand": row.get("brand") or "unknown",
-                "asin": row.get("asin"),
-                "price": current_price,
-                "buy_box_price": to_float_or_none(row.get("buy_box_price")),
-                "price_source": row.get("price_source"),
-                "yesterday_price": previous_price,
-                "price_change": price_change,
-                "price_change_display": format_price_change(price_change),
-                "is_tracked": row.get("is_tracked"),
-                "data_status": "ok" if current_price is not None and previous_price is not None else "数据缺失",
-            }
-        )
-    return rows
+        if current_price is None:
+            missing_current_prices += 1
+        if previous_price is None:
+            missing_baseline_prices += 1
+        item = build_top30_price_item(row, previous, price_change)
+        monitored_rows.append(item)
+        if price_change not in (None, 0):
+            price_changes.append(item)
+
+    rank_entries = [
+        build_top30_rank_move_item(row, yesterday_latest.get(normalize_asin(row.get("asin"))), "进入")
+        for row in today_top30
+        if normalize_asin(row.get("asin")) not in yesterday_top30_asins
+    ]
+    rank_exits = [
+        build_top30_rank_move_item(today_latest.get(normalize_asin(row.get("asin"))), row, "掉出")
+        for row in yesterday_top30
+        if normalize_asin(row.get("asin")) not in today_top30_asins
+    ]
+    price_changes.sort(key=lambda item: abs(item["price_change"]), reverse=True)
+    rank_entries.sort(key=lambda item: item.get("current_rank") or 999999)
+    rank_exits.sort(key=lambda item: item.get("yesterday_rank") or 999999)
+
+    return {
+        "summary": {
+            "tracked_top_n": top_limit,
+            "today_count": len(today_top30),
+            "yesterday_count": len(yesterday_top30),
+            "price_change_count": len(price_changes),
+            "rank_entry_count": len(rank_entries),
+            "rank_exit_count": len(rank_exits),
+            "missing_current_price_count": missing_current_prices,
+            "missing_baseline_price_count": missing_baseline_prices,
+        },
+        "price_changes": price_changes[:10],
+        "rank_entries": rank_entries[:10],
+        "rank_exits": rank_exits[:10],
+        "monitored_rows": monitored_rows,
+    }
+
+
+def build_top30_price_item(
+    row: dict[str, Any],
+    previous: dict[str, Any] | None,
+    price_change: float | None,
+) -> dict[str, Any]:
+    return {
+        "rank": to_int_or_none(row.get("rank")),
+        "brand": row.get("brand") or "unknown",
+        "asin": row.get("asin"),
+        "price": to_float_or_none(row.get("price")),
+        "buy_box_price": to_float_or_none(row.get("buy_box_price")),
+        "price_source": row.get("price_source"),
+        "yesterday_rank": to_int_or_none(previous.get("rank")) if previous else None,
+        "yesterday_price": to_float_or_none(previous.get("price")) if previous else None,
+        "price_change": price_change,
+        "price_change_display": format_price_change(price_change),
+        "is_tracked": row.get("is_tracked"),
+        "data_status": "ok" if row.get("price") is not None and previous and previous.get("price") is not None else "数据缺失",
+    }
+
+
+def build_top30_rank_move_item(
+    today: dict[str, Any] | None,
+    yesterday: dict[str, Any] | None,
+    direction: str,
+) -> dict[str, Any]:
+    row = today or yesterday or {}
+    return {
+        "direction": direction,
+        "brand": row.get("brand") or "unknown",
+        "asin": row.get("asin"),
+        "current_rank": to_int_or_none(today.get("rank")) if today else None,
+        "yesterday_rank": to_int_or_none(yesterday.get("rank")) if yesterday else None,
+        "current_price": to_float_or_none(today.get("price")) if today else None,
+        "yesterday_price": to_float_or_none(yesterday.get("price")) if yesterday else None,
+        "is_tracked": row.get("is_tracked"),
+    }
 
 
 def summarize_bestseller_rankings(
@@ -640,6 +713,7 @@ def summarize_bestseller_rankings(
 
 
 def latest_bestseller_by_asin(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    rows = latest_bestseller_batch_rows(rows)
     latest: dict[str, dict[str, Any]] = {}
     for row in rows:
         asin = str(row.get("asin") or "").upper()
@@ -650,6 +724,15 @@ def latest_bestseller_by_asin(rows: list[dict[str, Any]]) -> dict[str, dict[str,
         if previous_time is None or current_time > previous_time:
             latest[asin] = row
     return latest
+
+
+def latest_bestseller_batch_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    dated = [(parse_datetime(row.get("snapshot_at")), row) for row in rows]
+    valid_times = [timestamp for timestamp, _ in dated if timestamp is not None]
+    if not valid_times:
+        return rows
+    latest_time = max(valid_times)
+    return [row for timestamp, row in dated if timestamp == latest_time]
 
 
 def normalize_bestseller_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -861,6 +944,7 @@ def earliest_snapshot_by_asin(snapshots: list[dict[str, Any]]) -> dict[str, dict
 
 
 def earliest_bestseller_by_asin(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    rows = earliest_bestseller_batch_rows(rows)
     earliest: dict[str, dict[str, Any]] = {}
     for row in rows:
         asin = normalize_asin(row.get("asin"))
@@ -871,6 +955,15 @@ def earliest_bestseller_by_asin(rows: list[dict[str, Any]]) -> dict[str, dict[st
         if previous_time is None or current_time < previous_time:
             earliest[asin] = row
     return earliest
+
+
+def earliest_bestseller_batch_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    dated = [(parse_datetime(row.get("snapshot_at")), row) for row in rows]
+    valid_times = [timestamp for timestamp, _ in dated if timestamp is not None]
+    if not valid_times:
+        return rows
+    earliest_time = min(valid_times)
+    return [row for timestamp, row in dated if timestamp == earliest_time]
 
 
 def render_prompt(report_payload: dict[str, Any]) -> str:
