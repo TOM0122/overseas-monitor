@@ -14,11 +14,6 @@ def row(day: date, **values):
     return {"scraped_at": local_time.astimezone(timezone.utc).isoformat(), **values}
 
 
-def snapshot(day: date, **values):
-    local_time = datetime.combine(day, datetime.min.time(), tzinfo=TZ)
-    return {"snapshot_at": local_time.astimezone(timezone.utc).isoformat(), **values}
-
-
 def test_should_alert_requires_absolute_and_relative_drop():
     assert should_alert(
         QualityMetric("x", current=0, baseline_avg=10.0, baseline_days=14, minimum_expected=1),
@@ -34,12 +29,10 @@ def test_should_alert_requires_absolute_and_relative_drop():
     )
 
 
-def test_build_data_quality_alerts_detects_source_and_keepa_drops():
+def test_build_data_quality_alerts_detects_offsite_source_drops():
     report_date = date(2026, 6, 5)
     history_days = [report_date - timedelta(days=i) for i in range(1, 15)]
     history_offsite = []
-    history_snapshots = []
-    history_bestsellers = []
     for day in history_days:
         history_offsite.extend(
             [
@@ -48,21 +41,16 @@ def test_build_data_quality_alerts_detects_source_and_keepa_drops():
                 row(day, source="hip2save", brand="Shark", price=11.99),
             ]
         )
-        history_snapshots.append(snapshot(day, asin="B0A"))
-        history_bestsellers.extend(snapshot(day, asin=f"B0{i}", rank=i) for i in range(1, 101))
 
     alerts = build_data_quality_alerts(
         report_date=report_date,
         tz=TZ,
         today_offsite=[],
         history_offsite=history_offsite,
-        today_snapshots=[],
-        history_snapshots=history_snapshots,
-        today_bestsellers=[],
-        history_bestsellers=history_bestsellers,
     )
 
     assert any("slickdeals Deal 数" in alert for alert in alerts)
     assert any("hip2save Deal 数" in alert for alert in alerts)
-    assert any("Keepa snapshots 行数" in alert for alert in alerts)
-    assert any("Keepa bestsellers 行数" in alert for alert in alerts)
+    assert any("slickdeals 品牌数" in alert for alert in alerts)
+    assert any("hip2save 有效价格数" in alert for alert in alerts)
+    assert all("行数" not in alert for alert in alerts)
