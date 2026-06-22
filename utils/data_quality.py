@@ -21,10 +21,6 @@ def build_data_quality_alerts(
     tz: ZoneInfo,
     today_offsite: list[dict[str, Any]],
     history_offsite: list[dict[str, Any]],
-    today_snapshots: list[dict[str, Any]],
-    history_snapshots: list[dict[str, Any]],
-    today_bestsellers: list[dict[str, Any]],
-    history_bestsellers: list[dict[str, Any]],
     drop_ratio: float = 0.4,
 ) -> list[str]:
     """Return deterministic data-quality alerts for source volume drops.
@@ -37,10 +33,6 @@ def build_data_quality_alerts(
         tz=tz,
         today_offsite=today_offsite,
         history_offsite=history_offsite,
-        today_snapshots=today_snapshots,
-        history_snapshots=history_snapshots,
-        today_bestsellers=today_bestsellers,
-        history_bestsellers=history_bestsellers,
     )
     alerts = []
     for metric in metrics:
@@ -61,10 +53,6 @@ def build_quality_metrics(
     tz: ZoneInfo,
     today_offsite: list[dict[str, Any]],
     history_offsite: list[dict[str, Any]],
-    today_snapshots: list[dict[str, Any]],
-    history_snapshots: list[dict[str, Any]],
-    today_bestsellers: list[dict[str, Any]],
-    history_bestsellers: list[dict[str, Any]],
 ) -> list[QualityMetric]:
     sources = sorted({row.get("source") or "slickdeals" for row in today_offsite + history_offsite})
     metrics: list[QualityMetric] = []
@@ -110,25 +98,6 @@ def build_quality_metrics(
                     ),
                 ]
             )
-
-        metrics.extend(
-            [
-                QualityMetric(
-                    name="Keepa snapshots 行数",
-                    current=len(today_snapshots),
-                    baseline_avg=average_daily_count(history_snapshots, "snapshot_at", report_date, tz, days=window_days),
-                    baseline_days=window_days,
-                    minimum_expected=1,
-                ),
-                QualityMetric(
-                    name="Keepa bestsellers 行数",
-                    current=len(today_bestsellers),
-                    baseline_avg=average_daily_count(history_bestsellers, "snapshot_at", report_date, tz, days=window_days),
-                    baseline_days=window_days,
-                    minimum_expected=30,
-                ),
-            ]
-        )
     return metrics
 
 

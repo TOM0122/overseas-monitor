@@ -13,13 +13,13 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from analysis import analyzer
-from scrapers import amazon_bestseller_scraper, hip2save_scraper, keepa_fetcher, slickdeals_scraper
+from scrapers import hip2save_scraper, slickdeals_scraper
 from utils.data_quality import build_data_quality_alerts
 from utils.db import get_repository
 from utils.dingtalk import get_dingtalk_client
 
 # 这些步骤若成功但返回 0 条记录，视为异常并告警。
-CRITICAL_EMPTY_STEPS = {"slickdeals_scraper", "keepa_fetcher", "amazon_bestseller_scraper"}
+CRITICAL_EMPTY_STEPS = {"slickdeals_scraper"}
 
 
 @dataclass
@@ -88,7 +88,6 @@ def collect_data_quality_alerts() -> list[str]:
     today_start_utc, today_end_utc = analyzer.local_day_bounds_utc(report_date, tz)
     history_start_utc = today_start_utc - timedelta(days=14)
     offsite_category = os.getenv("ANALYSIS_OFFSITE_CATEGORY", "fan")
-    bsr_category_id = os.getenv("KEEPA_BSR_CATEGORY_ID", keepa_fetcher.DEFAULT_BSR_CATEGORY_ID)
     drop_ratio = float(os.getenv("DATA_QUALITY_DROP_RATIO", "0.4"))
 
     repository = get_repository()
@@ -102,27 +101,11 @@ def collect_data_quality_alerts() -> list[str]:
         today_start_utc,
         category=offsite_category,
     )
-    today_snapshots = repository.fetch_amazon_snapshots_between(today_start_utc, today_end_utc)
-    history_snapshots = repository.fetch_amazon_snapshots_between(history_start_utc, today_start_utc)
-    today_bestsellers = repository.fetch_amazon_bestsellers_between(
-        today_start_utc,
-        today_end_utc,
-        category_id=bsr_category_id,
-    )
-    history_bestsellers = repository.fetch_amazon_bestsellers_between(
-        history_start_utc,
-        today_start_utc,
-        category_id=bsr_category_id,
-    )
     return build_data_quality_alerts(
         report_date=report_date,
         tz=tz,
         today_offsite=today_offsite,
         history_offsite=history_offsite,
-        today_snapshots=today_snapshots,
-        history_snapshots=history_snapshots,
-        today_bestsellers=today_bestsellers,
-        history_bestsellers=history_bestsellers,
         drop_ratio=drop_ratio,
     )
 
@@ -132,8 +115,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--slickdeals-limit", type=int, default=20, help="Max deals per keyword")
     parser.add_argument("--skip-slickdeals", action="store_true", help="Skip Slickdeals scraping")
     parser.add_argument("--skip-hip2save", action="store_true", help="Skip hip2save scraping")
-    parser.add_argument("--skip-keepa", action="store_true", help="Skip Keepa fetching")
-    parser.add_argument("--skip-bestsellers", action="store_true", help="Skip Amazon best-seller ranking fetch")
     parser.add_argument("--skip-analysis", action="store_true", help="Skip report generation and push")
     parser.add_argument(
         "--dry-run",
@@ -172,22 +153,6 @@ def main() -> None:
                     limit=args.slickdeals_limit,
                     dry_run=args.dry_run,
                 ),
-            )
-        )
-
-    if not args.skip_keepa:
-        results.append(
-            run_step(
-                "keepa_fetcher",
-                lambda: keepa_fetcher.run(dry_run=args.dry_run),
-            )
-        )
-
-    if not args.skip_bestsellers:
-        results.append(
-            run_step(
-                "amazon_bestseller_scraper",
-                lambda: amazon_bestseller_scraper.run(dry_run=args.dry_run),
             )
         )
 
