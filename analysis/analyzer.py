@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from analysis.fallback_report import build_fallback_report
+from analysis.report_validator import ReportValidationResult, validate_report
 from scrapers.slickdeals_scraper import infer_brand_from_title, is_relevant_to_category
 from utils.db import get_repository
 from utils.dingtalk import get_dingtalk_client
@@ -44,6 +46,7 @@ def run(
     report_date: date | None = None,
     dry_run: bool = False,
     no_push: bool = False,
+    run_tracker: Any = None,
 ) -> str:
     """Build daily data package, call LLM, and send the report to DingTalk."""
     load_dotenv()
@@ -90,22 +93,90 @@ def run(
         print(output)
         return output
 
-    prompt = render_prompt(report_payload)
-    report_markdown = get_llm_client().complete_prompt(
-        prompt,
-        system="你是海外电商品牌的竞品数据分析助手。只基于输入数据生成简洁、可执行的中文日报。",
-    )
-    if not report_markdown:
-        raise RuntimeError("LLM returned an empty report")
+    report_markdown = generate_validated_report(report_payload, run_tracker=run_tracker)
 
     if no_push:
         print(report_markdown)
         return report_markdown
 
     title = f"竞品监控日报 {report_date.isoformat()}"
-    get_dingtalk_client().send_markdown(title=title, markdown=report_markdown)
+    push_result = get_dingtalk_client().send_markdown(title=title, markdown=report_markdown)
     logger.info("Daily report sent to DingTalk")
+    if run_tracker is not None:
+        run_tracker.set_report_markdown(report_markdown)
+        if isinstance(push_result, dict):
+            run_tracker.record_push_result(push_result)
     return report_markdown
+
+
+SYSTEM_PROMPT = "你是海外电商品牌的竞品数据分析助手。只基于输入数据生成简洁、可执行的中文日报。"
+
+
+def generate_validated_report(report_payload: dict[str, Any], *, run_tracker: Any = None) -> str:
+    """LLM -> validate -> retry once with correction -> deterministic fallback.
+
+    永远返回一份可推送的四段报告：LLM 连续失败或校验不过时降级为确定性 fallback。
+    """
+    prompt = render_prompt(report_payload)
+    client = get_llm_client()
+    validation_status = "ok"
+    retry_count = 0
+    llm_error: str | None = None
+    last_result: ReportValidationResult | None = None
+    markdown = ""
+
+    for attempt in range(2):  # 首次 + 一次纠正重试
+        try:
+            markdown = client.complete_prompt(prompt, system=SYSTEM_PROMPT)
+        except Exception as exc:
+            llm_error = str(exc)
+            logger.exception("LLM call failed on attempt %s", attempt + 1)
+            markdown = ""
+        if markdown:
+            last_result = validate_report(markdown, report_payload)
+            if last_result.warnings:
+                logger.warning("Report validation warnings: %s", last_result.warnings)
+            if last_result.ok:
+                validation_status = "ok" if attempt == 0 else "ok_after_retry"
+                _record_llm(run_tracker, client, validation_status, retry_count)
+                return markdown
+            logger.warning("Report validation failed (attempt %s): %s", attempt + 1, last_result.errors)
+        if attempt == 0:
+            retry_count = 1
+            prompt = _correction_prompt(prompt, last_result, empty=not markdown)
+
+    # 两次都失败 → 确定性 fallback，绝不让当天无报告。
+    validation_status = "fallback"
+    reason = llm_error or (", ".join(last_result.errors) if last_result else "unknown")
+    logger.error("Using deterministic fallback report. reason=%s", reason)
+    _record_llm(run_tracker, client, validation_status, retry_count)
+    return build_fallback_report(report_payload, reason=reason)
+
+
+def _correction_prompt(prompt: str, result: ReportValidationResult | None, *, empty: bool) -> str:
+    issues = "报告为空。" if empty else "；".join(result.errors) if result else "结构不合规。"
+    return (
+        prompt
+        + "\n\n【上一次生成不合格，请修正后重写整份报告】问题："
+        + issues
+        + "\n严格输出四段：## 一、总览 / ## 二、站外每日发现 / ## 三、建议 / ## 四、注意，"
+        "并保留主标题「竞品监控日报 · 日期」。只能使用输入数据里出现过的链接。"
+    )
+
+
+def _record_llm(run_tracker: Any, client: Any, validation_status: str, retry_count: int) -> None:
+    if run_tracker is None:
+        return
+    info = {
+        "model": getattr(client, "model", None),
+        "validation_status": validation_status,
+        "retry_count": retry_count,
+    }
+    last = getattr(client, "last_completion", None)
+    if last is not None:
+        info["latency_seconds"] = getattr(last, "latency_seconds", None)
+        info["usage"] = getattr(last, "usage", None)
+    run_tracker.record_llm_info(**info)
 
 
 def build_report_payload(

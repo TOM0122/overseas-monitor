@@ -184,7 +184,7 @@ def main() -> None:
         (
             "daily_analyzer",
             args.skip_analysis,
-            lambda: analyzer.run(dry_run=args.dry_run, no_push=args.dry_run),
+            lambda: analyzer.run(dry_run=args.dry_run, no_push=args.dry_run, run_tracker=tracker),
         ),
     ]
 
