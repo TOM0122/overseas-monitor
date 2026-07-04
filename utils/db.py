@@ -160,6 +160,14 @@ class SupabaseRepository:
         response = self.client.table(table).upsert(rows, on_conflict=on_conflict).execute()
         return response.data or []
 
+    def insert_agent_run(self, row: dict[str, Any]) -> list[dict[str, Any]]:
+        response = self.client.table("agent_runs").insert(row).execute()
+        return response.data or []
+
+    def update_agent_run(self, run_id: str, values: dict[str, Any]) -> list[dict[str, Any]]:
+        response = self.client.table("agent_runs").update(values).eq("id", run_id).execute()
+        return response.data or []
+
 
 def get_repository() -> SupabaseRepository:
     return SupabaseRepository()
