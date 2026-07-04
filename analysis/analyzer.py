@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from analysis.fallback_report import build_fallback_report
+from analysis.insights import build_insights
 from analysis.report_validator import ReportValidationResult, validate_report
 from scrapers.slickdeals_scraper import infer_brand_from_title, is_relevant_to_category
 from utils.db import get_repository
@@ -194,7 +195,7 @@ def build_report_payload(
 ) -> dict[str, Any]:
     offsite_week = offsite_week or []
 
-    return {
+    payload: dict[str, Any] = {
         "report_date": report_date.isoformat(),
         "timezone": str(tz),
         "category_label": category_label,
@@ -223,6 +224,9 @@ def build_report_payload(
             min_offsite_price,
         ),
     }
+    # 确定性洞察前置：LLM 只负责表达，不负责发明分析逻辑。
+    payload["insights"] = build_insights(payload)
+    return payload
 
 
 def summarize_offsite_deals(

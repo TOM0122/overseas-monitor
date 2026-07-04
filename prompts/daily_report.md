@@ -30,7 +30,7 @@
   - **hip2save**（数据源 `offsite.hip2save_competitor_deals`），列「品牌 | 折扣 | 折扣价格 | 💬 | 发布日 | 链接」：`折扣价格` 取 `price` 写「$N」、空写「—」；`posted_at` 只取日期。**表格正下方同样加 1-2 句小结**，从评论热度 / 折扣力度 / 时效角度点出今日 hip2save 上最值得注意的竞品帖子（同样可用 `title` 描述）。
   - 某来源无主要竞品 Deal，写「今日 Slickdeals/hip2save 暂无主要竞品 Deal」，不要编造行。逐行表里不放标题；折扣价格即该 Deal 的 `price`。非监控品牌只体现在总览计数，不进表。
 - 站外价格只能用 `offsite.price_range`、`offsite.slickdeals_competitor_deals`、`offsite.hip2save_competitor_deals`、`trends` 中已有字段，不要从标题年份、mAh、评论数等推断。`offsite` 已过滤为 `category_label` 品类，不要写入其它品类。
-- 建议：基于**逐 Deal 的折扣、价格、Frontpage、点赞/评论热度、7 天站外趋势**给 1-3 条可执行建议。每条须绑定具体数据并给出明确动作（跟价 / 补 Deal / 冲 Frontpage / 调整价位 / 复核新兴品牌），禁止空泛建议。
+- 建议：**优先改写 `insights.suggestion_candidates` 里已生成的建议**（这些是代码根据规则算好的，请用简洁中文表达，不要新增与数据无关的判断）；若 `insights.suggestion_candidates` 为空，再基于**逐 Deal 的折扣、价格、Frontpage、点赞/评论热度、7 天站外趋势**补 1-2 条，每条须绑定具体数据并给出明确动作（跟价 / 补 Deal / 冲 Frontpage / 调整价位 / 复核新兴品牌）。禁止空泛或凭空发明的建议。也可参考 `insights.top_heat_deal` / `insights.lowest_price_deal` / `insights.frontpage_deals`。
 - 注意：列出数据缺失、抓取异常、需人工复核的点；如 `competitor_candidates` 非空，可用一句话列出需人工复核的新兴竞品候选品牌，不要自动说已纳入监控。
 
 输入数据：
