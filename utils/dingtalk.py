@@ -85,24 +85,46 @@ class DingTalkWebhookClient:
             raise ValueError("DINGTALK_WEBHOOK_URL is required")
 
     def send_markdown(self, title: str, markdown: str) -> dict[str, Any]:
-        """Send markdown content to a DingTalk group."""
+        """Send markdown content to a DingTalk group.
+
+        返回结构：ok / errcode / errmsg / truncated / original_bytes / final_bytes。
+        推送失败不抛异常（由调用方看 ok 决定），便于把结果记进 agent_runs。
+        """
         markdown = _normalize_markdown(markdown)
         original_bytes = len(markdown.encode("utf-8"))
-        if original_bytes > self.markdown_max_bytes:
+        truncated = original_bytes > self.markdown_max_bytes
+        if truncated:
             logger.warning(
                 "DingTalk markdown %s bytes exceeds limit %s, truncating",
                 original_bytes,
                 self.markdown_max_bytes,
             )
             markdown = _truncate_for_dingtalk(markdown, self.markdown_max_bytes)
+        final_bytes = len(markdown.encode("utf-8"))
         payload = {
             "msgtype": "markdown",
-            "markdown": {
-                "title": title,
-                "text": markdown,
-            },
+            "markdown": {"title": title, "text": markdown},
         }
-        return self._post(payload)
+        result = self._post_classified(payload)
+        result.update(
+            {"truncated": truncated, "original_bytes": original_bytes, "final_bytes": final_bytes}
+        )
+        return result
+
+    def _post_classified(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            response = requests.post(self._signed_webhook_url(), json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:
+            logger.exception("DingTalk send failed")
+            return {"ok": False, "errcode": None, "errmsg": str(exc)[:200]}
+        errcode = data.get("errcode")
+        ok = errcode in (None, 0)
+        if not ok:
+            # 常见：安全关键词未命中（文案需含「竞品监控」）会返回非 0 errcode。
+            logger.error("DingTalk returned errcode=%s errmsg=%s", errcode, data.get("errmsg"))
+        return {"ok": ok, "errcode": errcode, "errmsg": data.get("errmsg")}
 
     def send_text(self, text: str) -> dict[str, Any]:
         """Send a simple text message. Useful for smoke tests."""

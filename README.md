@@ -4,6 +4,65 @@
 
 已停用：Keepa、Amazon snapshots、Amazon Best Sellers / Top30 / BSR 监测。历史 Supabase 表和 SQL 迁移保留，但本 Agent 不再写入或展示这些站内数据。
 
+## 定位与每日运行流程
+
+这是一个 **Offsite Deal Monitor / LLM-assisted competitor report agent**，不是站内 Amazon / Keepa 监控。每次运行是一个可追踪的 **Agent Run**：
+
+1. scrape Slickdeals → 2. scrape hip2save → 3. write offsite deals（`offsite_deals`，旧库仍为 `slickdeals_deals`）
+4. build deterministic insights（`analysis/insights.py`，规则先算好 suggestion candidates）
+5. call LLM（`utils/llm_client.py`，记录耗时/usage，失败重试）
+6. validate report（`analysis/report_validator.py`：四段结构、主标题、链接白名单、禁用站内关键词、幻觉句式）
+7. 校验不过 → 纠正重试一次 → 仍失败则 deterministic **fallback report**（`analysis/fallback_report.py`，绝不让当天无报告）
+8. push DingTalk（`send_markdown` 返回 ok / errcode / errmsg / truncated / bytes）
+9. record agent run（`utils/run_tracker.py` → `agent_runs` 表：step 结果/耗时、数据量、质量告警、LLM 信息、推送结果、状态）
+
+某个 scraper 失败不阻断其它步骤；非 dry-run 且有失败步骤时最终非零退出。dry-run 不写库、不推钉钉、不记 agent run。
+
+### 数据库表
+
+- `offsite_deals`（站外 Deal，Slickdeals + hip2save 共用，`source` 区分）。**旧命名 `slickdeals_deals` 仍是默认**，执行 `sql/008` 重命名迁移后把 `OFFSITE_DEALS_TABLE` 改为 `offsite_deals` 即可切换（代码有兼容 wrapper）。
+- `agent_runs`（每次运行记录，`sql/007`）。
+- legacy `amazon_snapshots` / `amazon_bestsellers`：保留但已停用。
+
+### 关键新增环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `OFFSITE_DEALS_TABLE` | `slickdeals_deals` | 站外 Deal 表名；迁移后改 `offsite_deals` |
+| `SCRAPER_MAX_RUNTIME_SECONDS` | `600` | 单 source 运行预算，超出返回 partial 不崩溃 |
+| `HIP2SAVE_MAX_DETAIL_PAGES_PER_KEYWORD` | `20` | hip2save 每关键词详情页上限 |
+| `HIP2SAVE_DETAIL_SLEEP_MIN/MAX_SECONDS` | `2` / `3` | 详情页抓取间隔 |
+| `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `60` / `1` | LLM 请求超时与重试次数 |
+| `DINGTALK_MARKDOWN_MAX_BYTES` | `19000` | 钉钉 markdown 字节上限（超出截断）|
+| `DATA_QUALITY_MIN_SAMPLE` | `10` | 比例型质量告警的最小样本量（防低流量误报）|
+| `DATA_QUALITY_UNKNOWN_BRAND_RATIO` / `NULL_PRICE_RATIO` / `DUP_RATIO` / `TITLE_UNIQUE_MIN_RATIO` | `0.85` / `0.7` / `0.3` / `0.5` | 各质量指标阈值 |
+
+数据质量告警（volume 骤降 + unknown 品牌比例 + 价格缺失比例 + 重复 Deal 比例 + source 新鲜度 + 标题相似度）为 deterministic，warn-only，复用现有钉钉告警通道，写入 `agent_runs.quality_alerts`。类目相关性规则外置于 `config/category_rules.toml`（缺失时回退内置默认）。
+
+## 本地开发
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+
+python -m compileall main.py analysis scrapers utils tests
+python -m pytest -q
+
+python -m analysis.analyzer --dry-run   # 打印 payload，不调 LLM
+python main.py --dry-run                # 全流程 dry-run，不写库/不推送/不记 run
+```
+
+CI：`.github/workflows/ci.yml` 在 push / PR 时跑 compile + pytest（3.11）。测试全程 mock 外部服务，不访问真实网络。
+
+### 生产部署与排查
+
+- Railway Cron：`cronSchedule` 用 UTC；`50 0 * * *` = 北京 08:50。见 `railway.json`。
+- 检查运行历史：查 Supabase `agent_runs`（按 `started_at desc`），看 `status` / `step_results` / `quality_alerts` / `push_result` / `error_summary`。
+- 排查某 source 抓取失败：看当天 `agent_runs.step_results` 里对应 step 的 `error` 与 `partial`，或 Railway 日志中 `run=<id>` 前缀。
+- 安全：不要提交真实 `.env`；密钥在 Railway Variables 配置；Supabase service role key 权限较大，勿外泄。
+
 ## 技术栈
 
 - Python 3.11+

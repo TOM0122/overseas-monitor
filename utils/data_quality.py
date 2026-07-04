@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
@@ -44,7 +45,62 @@ def build_data_quality_alerts(
                     f"低于阈值 {drop_ratio:.0%}"
                 )
             )
+    alerts.extend(build_ratio_alerts(today_offsite, history_offsite))
     return alerts
+
+
+def build_ratio_alerts(
+    today_offsite: list[dict[str, Any]],
+    history_offsite: list[dict[str, Any]],
+) -> list[str]:
+    """比例型 / 新鲜度 / 相似度告警。刻意保守，避免低流量日误报。"""
+    alerts: list[str] = []
+    min_sample = int(os.getenv("DATA_QUALITY_MIN_SAMPLE", "10"))
+    unknown_ratio_max = float(os.getenv("DATA_QUALITY_UNKNOWN_BRAND_RATIO", "0.85"))
+    null_price_ratio_max = float(os.getenv("DATA_QUALITY_NULL_PRICE_RATIO", "0.7"))
+    dup_ratio_max = float(os.getenv("DATA_QUALITY_DUP_RATIO", "0.3"))
+    title_unique_min = float(os.getenv("DATA_QUALITY_TITLE_UNIQUE_MIN_RATIO", "0.5"))
+
+    sources = sorted({row.get("source") or "slickdeals" for row in today_offsite})
+    for source in sources:
+        rows = [r for r in today_offsite if (r.get("source") or "slickdeals") == source]
+        n = len(rows)
+        if n < min_sample:
+            continue  # 样本太少，比例不稳，跳过避免误报
+
+        unknown = sum(1 for r in rows if not (clean_value(r.get("brand")) and clean_value(r.get("brand")) != "unknown"))
+        if unknown / n > unknown_ratio_max:
+            alerts.append(f"{source} unknown 品牌比例 {unknown / n:.0%}（{unknown}/{n}）异常偏高，疑似品牌解析退化")
+
+        null_price = sum(1 for r in rows if _price_or_none(r.get("price")) is None)
+        if null_price / n > null_price_ratio_max:
+            alerts.append(f"{source} 价格缺失比例 {null_price / n:.0%}（{null_price}/{n}）异常偏高")
+
+        keys = [str(r.get("deal_id") or r.get("url") or "") for r in rows if (r.get("deal_id") or r.get("url"))]
+        dup = len(keys) - len(set(keys))
+        if keys and dup / len(keys) > dup_ratio_max:
+            alerts.append(f"{source} 重复 Deal 比例 {dup / len(keys):.0%}（{dup}/{len(keys)}）异常偏高")
+
+        top = [clean_value(r.get("title")) for r in rows[:20] if clean_value(r.get("title"))]
+        if len(top) >= min_sample and len(set(top)) / len(top) < title_unique_min:
+            alerts.append(
+                f"{source} 前 {len(top)} 条标题唯一率仅 {len(set(top)) / len(top):.0%}，疑似 parser 抓错区域"
+            )
+
+    # source freshness：历史有数据但今天完全没有。
+    history_sources = {row.get("source") or "slickdeals" for row in history_offsite}
+    today_sources = {row.get("source") or "slickdeals" for row in today_offsite}
+    for source in sorted(history_sources - today_sources):
+        alerts.append(f"{source} 今日 0 条数据，但历史有数据，疑似抓取失败")
+    return alerts
+
+
+def _price_or_none(value: Any) -> float | None:
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    return price if price > 0 else None
 
 
 def build_quality_metrics(
