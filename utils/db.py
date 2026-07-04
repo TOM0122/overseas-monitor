@@ -26,25 +26,31 @@ class SupabaseRepository:
         if not self.key:
             raise ValueError("SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY is required")
 
+        # 站外 Deal 表名可配置：旧生产库仍叫 slickdeals_deals；执行重命名迁移后可切到 offsite_deals。
+        self.offsite_table = os.getenv("OFFSITE_DEALS_TABLE", "slickdeals_deals")
         self.client: Client = create_client(self.url, self.key)
 
-    def upsert_slickdeals_deals(self, deals: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Insert or update Slickdeals rows by unique deal_id."""
+    def upsert_offsite_deals(self, deals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Insert or update off-site (Slickdeals + hip2save) rows by unique deal_id."""
         if not deals:
-            logger.info("No Slickdeals deals to upsert")
+            logger.info("No off-site deals to upsert")
             return []
 
-        deals = sanitize_rows("slickdeals_deals", deals, ["deal_id"])
+        deals = sanitize_rows(self.offsite_table, deals, ["deal_id"])
         if not deals:
             return []
 
         response = (
-            self.client.table("slickdeals_deals")
+            self.client.table(self.offsite_table)
             .upsert(deals, on_conflict="deal_id")
             .execute()
         )
-        logger.info("Upserted %s Slickdeals deals", len(response.data or []))
+        logger.info("Upserted %s off-site deals into %s", len(response.data or []), self.offsite_table)
         return response.data or []
+
+    def upsert_slickdeals_deals(self, deals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Legacy alias — kept for compatibility; delegates to upsert_offsite_deals."""
+        return self.upsert_offsite_deals(deals)
 
     def insert_amazon_snapshots(self, snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Insert Amazon snapshot rows. Snapshots are append-only by design."""
@@ -78,7 +84,7 @@ class SupabaseRepository:
         logger.info("Upserted %s Amazon best-seller rows", len(response.data or []))
         return response.data or []
 
-    def fetch_slickdeals_deals_between(
+    def fetch_offsite_deals_between(
         self,
         start_utc: datetime,
         end_utc: datetime,
@@ -86,7 +92,7 @@ class SupabaseRepository:
         source: str | None = None,
     ) -> list[dict[str, Any]]:
         query = (
-            self.client.table("slickdeals_deals")
+            self.client.table(self.offsite_table)
             .select("*")
             .gte("scraped_at", start_utc.isoformat())
             .lt("scraped_at", end_utc.isoformat())
@@ -99,6 +105,16 @@ class SupabaseRepository:
 
         response = query.execute()
         return response.data or []
+
+    def fetch_slickdeals_deals_between(
+        self,
+        start_utc: datetime,
+        end_utc: datetime,
+        category: str | None = None,
+        source: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Legacy alias — kept for compatibility; delegates to fetch_offsite_deals_between."""
+        return self.fetch_offsite_deals_between(start_utc, end_utc, category=category, source=source)
 
     def fetch_amazon_snapshots_between(
         self,
