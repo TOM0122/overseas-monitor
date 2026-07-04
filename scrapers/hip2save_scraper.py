@@ -45,14 +45,34 @@ class Hip2SaveLink:
     title: str | None = None
 
 
-def run(*, limit: int = 20, dry_run: bool = False, debug_html: bool = False) -> list[dict]:
+class DealList(list):
+    """普通 list，附带运行预算相关的 partial 标记，供 main.py step tracking 读取。"""
+
+    partial: bool = False
+    partial_reason: str | None = None
+
+
+def run(*, limit: int = 20, dry_run: bool = False, debug_html: bool = False) -> DealList:
     load_dotenv()
     keyword_configs = load_keyword_configs(CONFIG_DIR / "keywords.txt")
     monitored_brands = load_brand_list(CONFIG_DIR / "brand_list.txt")
     session = requests.Session()
 
+    # 运行预算：hip2save 逐详情页抓取，可能膨胀。超预算则停止并返回已抓到的数据（partial）。
+    max_runtime = float(os.getenv("SCRAPER_MAX_RUNTIME_SECONDS", "600"))
+    max_detail_pages = int(os.getenv("HIP2SAVE_MAX_DETAIL_PAGES_PER_KEYWORD", "20"))
+    sleep_min = float(os.getenv("HIP2SAVE_DETAIL_SLEEP_MIN_SECONDS", "2"))
+    sleep_max = float(os.getenv("HIP2SAVE_DETAIL_SLEEP_MAX_SECONDS", "3"))
+    per_keyword_cap = min(limit, max_detail_pages)
+    started = time.monotonic()
+    partial_reason: str | None = None
+
     all_deals: list[dict] = []
     for index, keyword_config in enumerate(keyword_configs, start=1):
+        if time.monotonic() - started > max_runtime:
+            partial_reason = f"exceeded SCRAPER_MAX_RUNTIME_SECONDS={max_runtime:.0f}s"
+            logger.warning("hip2save budget hit before keyword=%r; returning partial", keyword_config.keyword)
+            break
         try:
             logger.info(
                 "Scraping hip2save keyword=%r category=%s",
@@ -66,7 +86,10 @@ def run(*, limit: int = 20, dry_run: bool = False, debug_html: bool = False) -> 
             links = find_deal_links(html, keyword_config)
             keyword_deals: list[dict] = []
             for link in links:
-                if len(keyword_deals) >= limit:
+                if len(keyword_deals) >= per_keyword_cap:
+                    break
+                if time.monotonic() - started > max_runtime:
+                    partial_reason = f"exceeded SCRAPER_MAX_RUNTIME_SECONDS={max_runtime:.0f}s"
                     break
                 try:
                     detail_html = fetch_url(session, link.url)
@@ -80,7 +103,7 @@ def run(*, limit: int = 20, dry_run: bool = False, debug_html: bool = False) -> 
                     )
                     if deal:
                         keyword_deals.append(deal)
-                    time.sleep(random.uniform(2, 3))
+                    time.sleep(random.uniform(sleep_min, sleep_max))
                 except Exception:
                     logger.exception("Failed to parse hip2save detail url=%s", link.url)
 
@@ -89,17 +112,24 @@ def run(*, limit: int = 20, dry_run: bool = False, debug_html: bool = False) -> 
         except Exception:
             logger.exception("Failed to scrape hip2save keyword=%r", keyword_config.keyword)
 
+        if partial_reason:
+            break
         if index < len(keyword_configs):
-            time.sleep(random.uniform(2, 3))
+            time.sleep(random.uniform(sleep_min, sleep_max))
 
-    unique_deals = dedupe_deals(all_deals)
-    logger.info("Collected %s unique hip2save deals", len(unique_deals))
+    unique_deals = DealList(dedupe_deals(all_deals))
+    if partial_reason:
+        unique_deals.partial = True
+        unique_deals.partial_reason = partial_reason
+    logger.info(
+        "Collected %s unique hip2save deals (partial=%s)", len(unique_deals), unique_deals.partial
+    )
 
     if dry_run:
-        print(json.dumps(unique_deals, ensure_ascii=False, indent=2, default=str))
+        print(json.dumps(list(unique_deals), ensure_ascii=False, indent=2, default=str))
         return unique_deals
 
-    get_repository().upsert_slickdeals_deals(unique_deals)
+    get_repository().upsert_slickdeals_deals(list(unique_deals))
     return unique_deals
 
 

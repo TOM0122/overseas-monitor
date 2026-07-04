@@ -1,0 +1,65 @@
+# 类目相关性规则（外置，便于维护）。缺失或解析失败时代码回退到内置默认规则。
+# fan 判定顺序：hard_exclude -> product_modifiers(命中即相关) -> audience(排除) -> 剥离 non_product 后仍有 fan 则相关。
+
+[fan]
+
+# 命中即判定不相关：玩具/一元区/食品合集 + 家用大风扇类型（ceiling/tower/box…）。
+hard_exclude_patterns = [
+  "\\bbullseye\\b",
+  "\\bplayground\\b",
+  "\\bblasters?\\b",
+  "bubble[-\\s]?fans?",
+  "bubble[-\\s]?machine",
+  "dollar[-\\s]?spot",
+  "\\bpeeps\\b",
+  "\\bcupcakes?\\b",
+  "\\bhostess\\b",
+  "\\btwinkies?\\b",
+  "\\bmarshmallows?\\b",
+  "\\bgummies?\\b",
+  "ice[-\\s]?cream",
+  "\\bpopsicles?\\b",
+  "ceiling[-\\s]?fans?",
+  "tower[-\\s]?fans?",
+  "pedestal[-\\s]?fans?",
+  "box[-\\s]?fans?",
+  "stand(?:ing)?[-\\s]?fans?",
+  "window[-\\s]?fans?",
+  "exhaust[-\\s]?fans?",
+  "attic[-\\s]?fans?",
+  "whole[-\\s]?house[-\\s]?fans?",
+  "wall[-\\s]?mount(?:ed)?[-\\s]?fans?",
+]
+
+# 复数 fans 的受众/粉丝语境（无产品信号时排除）。
+audience_patterns = [
+  "\\bfans\\s*[:,]",
+  "\\bfans\\s+(?:can|will|get|got|rejoice|unite|everywhere|listen|score|love|want|rally)\\b",
+]
+
+# 个人/手持风扇产品修饰词：出现在 fan 附近即判定为真实风扇产品。
+product_modifiers = [
+  "portable", "handheld", "hand-held", "hand held", "mini", "neck",
+  "usb", "rechargeable", "battery", "bladeless", "clip", "clip-on",
+  "personal", "waist", "pocket", "desk",
+]
+
+# 非产品用法（先剥离，再看是否仍有 fan）：fan favorite / fan club / for X fans 等。
+non_product_patterns = [
+  "fans?[-\\s]?favorites?",
+  "fans?[-\\s]?fest",
+  "fans?[-\\s]?club",
+  "fans?[-\\s]?cave",
+  "fans?[-\\s]?gear",
+  "fans?[-\\s]?mail",
+  "fan[-\\s]?fiction",
+  "fans\\s*:",
+  "for[-\\s]+(?:[a-z'’\\-]+[-\\s]+){0,3}fans?\\b",
+  "(?:soccer|football|sports?|baseball|basketball|hockey|nfl|nba|mlb|music|movie|concert|anime|k-?pop)[-\\s]+fans?",
+]
+
+[hand_warmer]
+
+include_patterns = [
+  "\\bhand[-\\s]?warmers?\\b",
+]

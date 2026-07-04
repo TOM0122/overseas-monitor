@@ -17,6 +17,7 @@ import requests
 from bs4 import BeautifulSoup, Tag
 from dotenv import load_dotenv
 
+from utils.category_rules import get_fan_matchers, get_hand_warmer_matchers
 from utils.db import get_repository
 
 logger = logging.getLogger(__name__)
@@ -702,98 +703,26 @@ def parse_datetime(value: str) -> datetime | None:
 
 
 # "fan"/"fans" 作为粉丝/受众/活动名出现，而非产品时的已知短语。
-_FAN_NON_PRODUCT_PATTERNS = (
-    r"fans?[-\s]?favorites?",   # Fan-Favorite / Fan Favorites
-    r"fans?[-\s]?fest",         # Fan Fest
-    r"fans?[-\s]?club",         # Fan Club
-    r"fans?[-\s]?cave",         # Fan Cave
-    r"fans?[-\s]?gear",         # Fan Gear
-    r"fans?[-\s]?mail",         # Fan Mail
-    r"fan[-\s]?fiction",        # Fan Fiction
-    r"fans\s*:",                # "Dunkin' Fans:"（复数+冒号，典型的「面向受众」表达）
-    # 「为某受众群体」的表达，如 "...for Soccer Fans"、"for true sports fans"
-    r"for[-\s]+(?:[a-z'’\-]+[-\s]+){0,3}fans?\b",
-    # 常见受众限定词 + fans（球迷/乐迷/影迷等）
-    r"(?:soccer|football|sports?|baseball|basketball|hockey|nfl|nba|mlb|music|movie|concert|anime|k-?pop)[-\s]+fans?",
-)
-
-
-# 玩具 / 一元区合集等明显非「个人手持风扇」的语境，命中即判定不相关。
-_FAN_HARD_EXCLUDE_PATTERNS = (
-    r"\bbullseye\b",
-    r"\bplayground\b",
-    r"\bblasters?\b",
-    r"bubble[-\s]?fans?",
-    r"bubble[-\s]?machine",
-    r"dollar[-\s]?spot",
-    # 食品/糖果合集（"XXX Fans" 受众 + 食品商品）等非风扇语境。
-    # 注意：不要加 candy/chocolate/cookie 等可能是风扇颜色描述的词，避免误伤。
-    r"\bpeeps\b",
-    r"\bcupcakes?\b",
-    r"\bhostess\b",
-    r"\btwinkies?\b",
-    r"\bmarshmallows?\b",
-    r"\bgummies?\b",
-    r"ice[-\s]?cream",
-    r"\bpopsicles?\b",
-)
-
-
-# 非个人/手持风扇类型（家用大风扇、合集），命中即排除。
-_FAN_NON_PERSONAL_TYPE_PATTERNS = (
-    r"ceiling[-\s]?fans?",
-    r"tower[-\s]?fans?",
-    r"pedestal[-\s]?fans?",
-    r"box[-\s]?fans?",
-    r"stand(?:ing)?[-\s]?fans?",
-    r"window[-\s]?fans?",
-    r"exhaust[-\s]?fans?",
-    r"attic[-\s]?fans?",
-    r"whole[-\s]?house[-\s]?fans?",
-    r"wall[-\s]?mount(?:ed)?[-\s]?fans?",
-)
-
-# 个人/手持风扇产品修饰词：出现在 fan 附近 -> 判定为真实风扇产品（用于救「复数 Fans 的产品合集」）。
-_FAN_PRODUCT_MODIFIERS = (
-    "portable", "handheld", "hand-held", "hand held", "mini", "neck",
-    "usb", "rechargeable", "battery", "bladeless", "clip", "clip-on",
-    "personal", "waist", "pocket", "desk",
-)
-_FAN_PRODUCT_PATTERN = re.compile(
-    r"(?:" + "|".join(re.escape(modifier) for modifier in _FAN_PRODUCT_MODIFIERS) + r")"
-    r"[\w\s\-/(),.]{0,25}?\bfans?\b"
-    r"|\bfans?\b[\w\s\-/(),.]{0,25}?(?:"
-    + "|".join(re.escape(modifier) for modifier in _FAN_PRODUCT_MODIFIERS) + r")"
-)
-
-# 受众/粉丝语境（仅针对复数 fans，避免误伤单数产品「Fan,」与品牌所有格）。
-_FAN_AUDIENCE_PATTERNS = (
-    r"\bfans\s*[:,]",  # "Peeps Fans," / "Fans:"
-    r"\bfans\s+(?:can|will|get|got|rejoice|unite|everywhere|listen|score|love|want|rally)\b",
-)
-
-
 def is_relevant_to_category(title: str, url: str, category: str) -> bool:
     text = f"{title} {urlparse(url).path}".lower()
     if category == "fan":
-        # 1) 硬排除：玩具/一元区/食品（现有）+ 家用大风扇类型。
-        if any(re.search(pattern, text) for pattern in _FAN_HARD_EXCLUDE_PATTERNS):
-            return False
-        if any(re.search(pattern, text) for pattern in _FAN_NON_PERSONAL_TYPE_PATTERNS):
+        matchers = get_fan_matchers()
+        # 1) 硬排除：玩具/一元区/食品 + 家用大风扇类型。
+        if any(p.search(text) for p in matchers.hard_exclude):
             return False
         # 2) 明确的个人/手持风扇产品信号 -> 相关（救「Portable Fans $4.99」这类复数产品）。
-        if _FAN_PRODUCT_PATTERN.search(text):
+        if matchers.product is not None and matchers.product.search(text):
             return True
         # 3) 复数 fans 的受众/粉丝语境（无产品信号）-> 排除。
-        if any(re.search(pattern, text) for pattern in _FAN_AUDIENCE_PATTERNS):
+        if any(p.search(text) for p in matchers.audience):
             return False
-        # 4) 兜底：剥离已知非产品用法后仍有 fan(s) -> 相关（品牌所有格/单数 fan 在此保留，不误伤）。
+        # 4) 兜底：剥离已知非产品用法后仍有 fan(s) -> 相关（品牌所有格/单数 fan 在此保留）。
         stripped = text
-        for pattern in _FAN_NON_PRODUCT_PATTERNS:
-            stripped = re.sub(pattern, " ", stripped)
+        for pattern in matchers.non_product:
+            stripped = pattern.sub(" ", stripped)
         return bool(re.search(r"\bfans?\b", stripped))
     if category == "hand_warmer":
-        return bool(re.search(r"\bhand[-\s]?warmers?\b", text))
+        return any(p.search(text) for p in get_hand_warmer_matchers())
     return True
 
 
