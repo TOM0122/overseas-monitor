@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fafafa;
+  --foreground: #18181b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--background); }
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0;
+}
+button, input, select, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid #047857;
+  outline-offset: 2px;
+}
+dialog::backdrop { background: rgb(24 24 27 / 0.3); }
+
+.report-markdown { color: #3f3f46; font-size: 14px; line-height: 1.75; }
+.report-markdown h1, .report-markdown h2, .report-markdown h3 { color: #18181b; font-weight: 650; line-height: 1.35; }
+.report-markdown h1 { margin: 0 0 1rem; font-size: 1.4rem; }
+.report-markdown h2 { margin: 1.75rem 0 0.75rem; border-bottom: 1px solid #e4e4e7; padding-bottom: 0.45rem; font-size: 1.1rem; }
+.report-markdown h3 { margin: 1.25rem 0 0.5rem; font-size: 1rem; }
+.report-markdown p { margin: 0.7rem 0; }
+.report-markdown ul, .report-markdown ol { margin: 0.7rem 0; padding-left: 1.25rem; }
+.report-markdown ul { list-style: disc; }
+.report-markdown ol { list-style: decimal; }
+.report-markdown li { margin: 0.3rem 0; }
+.report-markdown strong { color: #18181b; font-weight: 650; }
+.report-markdown a { color: #047857; text-decoration: underline; text-underline-offset: 2px; }
+.report-markdown table { width: 100%; margin: 1rem 0; border-collapse: collapse; font-size: 13px; }
+.report-markdown th { background: #f4f4f5; color: #3f3f46; font-weight: 600; }
+.report-markdown th, .report-markdown td { border: 1px solid #e4e4e7; padding: 0.5rem 0.65rem; text-align: left; }
+.report-markdown blockquote { margin: 1rem 0; border-left: 3px solid #a1a1aa; padding-left: 1rem; color: #71717a; }
+.report-markdown code { border-radius: 4px; background: #f4f4f5; padding: 0.1rem 0.3rem; font-family: var(--font-geist-mono), monospace; font-size: 0.9em; }
+
+@media (max-width: 640px) {
+  .report-markdown { font-size: 13px; }
+  .report-markdown table { display: block; overflow-x: auto; white-space: nowrap; }
+}
