@@ -3,9 +3,8 @@
 import { MessageSquarePlus, X } from "lucide-react";
 import { useActionState, useEffect, useRef } from "react";
 
-import { createDealFeedback, initialFeedbackState } from "@/app/actions/feedback";
-import { FEEDBACK_LABELS } from "@/lib/format";
-import { FEEDBACK_TYPES } from "@/lib/types";
+import { createDealFeedback } from "@/app/actions/feedback";
+import { FEEDBACK_LABELS, FEEDBACK_TYPES, initialFeedbackState } from "@/lib/feedback/constants";
 
 export function FeedbackDialog({ dealId, title }: { dealId: string; title: string }) {
   const dialogRef = useRef<HTMLDialogElement>(null);

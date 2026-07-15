@@ -2,31 +2,27 @@
 
 import { revalidatePath } from "next/cache";
 
+import {
+  FEEDBACK_TYPES,
+  type FeedbackActionState,
+  type FeedbackType,
+} from "@/lib/feedback/constants";
 import { createDealFeedback as insertDealFeedback } from "@/lib/queries/feedback";
-import { FEEDBACK_TYPES, type FeedbackType } from "@/lib/types";
-
-export interface FeedbackActionState {
-  ok: boolean;
-  message: string;
-}
-
-export const initialFeedbackState: FeedbackActionState = { ok: false, message: "" };
-
-function textField(formData: FormData, name: string, maxLength: number): string {
-  const value = String(formData.get(name) ?? "").trim();
-  if (value.length > maxLength) throw new Error(`${name} 超过 ${maxLength} 个字符`);
-  return value;
-}
 
 export async function createDealFeedback(
   _previousState: FeedbackActionState,
   formData: FormData,
 ): Promise<FeedbackActionState> {
   try {
-    const dealId = textField(formData, "deal_id", 200);
-    const feedbackType = textField(formData, "feedback_type", 40) as FeedbackType;
-    const reason = textField(formData, "reason", 300);
-    const note = textField(formData, "note", 1000);
+    const textField = (name: string, maxLength: number): string => {
+      const value = String(formData.get(name) ?? "").trim();
+      if (value.length > maxLength) throw new Error(`${name} 超过 ${maxLength} 个字符`);
+      return value;
+    };
+    const dealId = textField("deal_id", 200);
+    const feedbackType = textField("feedback_type", 40) as FeedbackType;
+    const reason = textField("reason", 300);
+    const note = textField("note", 1000);
     if (!dealId) return { ok: false, message: "缺少 Deal ID" };
     if (!FEEDBACK_TYPES.includes(feedbackType)) return { ok: false, message: "反馈类型无效" };
 

@@ -1,8 +1,7 @@
 import { RotateCcw, Search } from "lucide-react";
 import Link from "next/link";
 
-import { FEEDBACK_LABELS } from "@/lib/format";
-import { FEEDBACK_TYPES } from "@/lib/types";
+import { FEEDBACK_LABELS, FEEDBACK_TYPES } from "@/lib/feedback/constants";
 
 type Values = Record<string, string | undefined>;
 

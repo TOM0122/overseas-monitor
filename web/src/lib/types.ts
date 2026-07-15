@@ -1,3 +1,5 @@
+import type { FeedbackType } from "@/lib/feedback/constants";
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
@@ -84,18 +86,6 @@ export interface Deal {
   posted_at: string | null;
   scraped_at: string;
 }
-
-export const FEEDBACK_TYPES = [
-  "valid",
-  "false_positive",
-  "important",
-  "ignore",
-  "brand_candidate",
-  "price_watch",
-  "content_opportunity",
-] as const;
-
-export type FeedbackType = (typeof FEEDBACK_TYPES)[number];
 
 export interface DealFeedback {
   id: number;

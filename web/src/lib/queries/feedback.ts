@@ -1,7 +1,8 @@
 import "server-only";
 
+import type { FeedbackType } from "@/lib/feedback/constants";
 import { getSupabaseAdminClient, getSupabaseReadClient } from "@/lib/supabase/server";
-import type { DealFeedback, FeedbackSummary, FeedbackType } from "@/lib/types";
+import type { DealFeedback, FeedbackSummary } from "@/lib/types";
 
 function normalizeFeedback(row: Record<string, unknown>): DealFeedback {
   return {

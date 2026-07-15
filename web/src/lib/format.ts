@@ -1,16 +1,6 @@
-import type { AgentRun, FeedbackType, JsonValue, LlmInfo, PushResult, SourceCounts } from "@/lib/types";
+import type { AgentRun, JsonValue, LlmInfo, PushResult, SourceCounts } from "@/lib/types";
 
 const DISPLAY_TIMEZONE = "Asia/Shanghai";
-
-export const FEEDBACK_LABELS: Record<FeedbackType, string> = {
-  valid: "有效 Deal",
-  false_positive: "误报",
-  important: "重要",
-  ignore: "忽略",
-  brand_candidate: "新竞品候选",
-  price_watch: "价格关注",
-  content_opportunity: "内容机会",
-};
 
 export function formatDateTime(value?: string | null): string {
   if (!value) return "-";

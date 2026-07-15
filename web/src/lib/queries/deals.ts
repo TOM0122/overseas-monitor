@@ -1,9 +1,10 @@
 import "server-only";
 
+import { FEEDBACK_TYPES, type FeedbackType } from "@/lib/feedback/constants";
 import { dayBoundsUtc, todayInShanghai } from "@/lib/format";
 import { getDealFeedbackSummary } from "@/lib/queries/feedback";
 import { getOffsiteDealsTable, getSupabaseReadClient } from "@/lib/supabase/server";
-import type { DashboardMetrics, Deal, DealFilters, DealWithFeedback, FeedbackType } from "@/lib/types";
+import type { DashboardMetrics, Deal, DealFilters, DealWithFeedback } from "@/lib/types";
 
 const DEFAULT_MONITORED_BRANDS = [
   "Aecooly",
@@ -147,5 +148,5 @@ export function getPriorityDeals(deals: DealWithFeedback[], limit = 10): DealWit
 }
 
 export function isFeedbackType(value: string | undefined): value is FeedbackType {
-  return ["valid", "false_positive", "important", "ignore", "brand_candidate", "price_watch", "content_opportunity"].includes(value ?? "");
+  return FEEDBACK_TYPES.includes((value ?? "") as FeedbackType);
 }

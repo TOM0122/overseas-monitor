@@ -3,7 +3,8 @@ import { ExternalLink } from "lucide-react";
 import { DealFeedbackButtons } from "@/components/deals/DealFeedbackButtons";
 import { DataTable, type DataColumn } from "@/components/ui/DataTable";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { FEEDBACK_LABELS, formatDateTime, formatMoney, formatPercent } from "@/lib/format";
+import { FEEDBACK_LABELS } from "@/lib/feedback/constants";
+import { formatDateTime, formatMoney, formatPercent } from "@/lib/format";
 import type { DealWithFeedback } from "@/lib/types";
 
 export function DealTable({ deals, showCategory = true, showActions = true }: { deals: DealWithFeedback[]; showCategory?: boolean; showActions?: boolean }) {
